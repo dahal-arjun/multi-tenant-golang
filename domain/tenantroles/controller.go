@@ -5,6 +5,7 @@ import (
 	"clean-architecture/pkg/framework"
 	"clean-architecture/pkg/responses"
 	"clean-architecture/pkg/types"
+	"clean-architecture/pkg/utils"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -35,7 +36,9 @@ func (c *Controller) tenantIDStr(ctx *gin.Context) (string, bool) {
 // @Tags tenant-roles
 // @Security BearerAuth
 // @Produce json
-// @Success 200 {array} models.TenantRole
+// @Param page query int false "Page (1-based)" default(1)
+// @Param limit query int false "Page size (max 100)" default(20)
+// @Success 200 {object} map[string]interface{} "data: array of models.TenantRole; pagination"
 // @Router /api/tenant-roles [get]
 func (c *Controller) List(ctx *gin.Context) {
 	tidStr, ok := c.tenantIDStr(ctx)
@@ -48,12 +51,13 @@ func (c *Controller) List(ctx *gin.Context) {
 		responses.HandleError(c.logger, ctx, err)
 		return
 	}
-	items, err := c.service.ListRoles(tid)
+	p := utils.BuildPagination(ctx)
+	items, total, err := c.service.ListRoles(tid, p.Offset, p.Limit)
 	if err != nil {
 		responses.HandleError(c.logger, ctx, err)
 		return
 	}
-	responses.JSON(ctx, 200, items)
+	responses.JSONPaginated(ctx, 200, items, total, p)
 }
 
 // Create godoc

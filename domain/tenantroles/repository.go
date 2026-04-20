@@ -22,11 +22,15 @@ func NewRepository(db infrastructure.Database, logger framework.Logger) Reposito
 	return Repository{Database: db, logger: logger}
 }
 
-// ListRolesForTenant returns non-deleted roles for a tenant.
-func (r *Repository) ListRolesForTenant(tenantID types.BinaryUUID) ([]models.TenantRole, error) {
+// ListRolesForTenant returns a page of non-deleted roles for a tenant and the total count.
+func (r *Repository) ListRolesForTenant(tenantID types.BinaryUUID, offset, limit int) ([]models.TenantRole, int64, error) {
+	var total int64
+	if err := r.Model(&models.TenantRole{}).Where("tenant_id = ?", tenantID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
 	var rows []models.TenantRole
-	err := r.Where("tenant_id = ?", tenantID).Order("slug").Find(&rows).Error
-	return rows, err
+	err := r.Where("tenant_id = ?", tenantID).Order("slug").Offset(offset).Limit(limit).Find(&rows).Error
+	return rows, total, err
 }
 
 // FindRoleByID loads a role or nil.

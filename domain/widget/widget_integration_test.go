@@ -10,6 +10,7 @@ import (
 	"clean-architecture/pkg/infrastructure"
 	"clean-architecture/pkg/jwtutil"
 	"clean-architecture/pkg/types"
+	"clean-architecture/pkg/utils"
 	"os"
 	"testing"
 
@@ -90,8 +91,9 @@ func TestIntegration_Postgres_WidgetList(t *testing.T) {
 	require.NoError(t, db.Create(w).Error)
 
 	wsvc := NewService(infrastructure.Database{DB: db}, log)
-	list, err := wsvc.List(tid.String())
+	list, total, err := wsvc.List(tid.String(), utils.DefaultPagination())
 	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
 	require.Len(t, list, 1)
 	require.Equal(t, "Hello Widget", list[0].Title)
 }

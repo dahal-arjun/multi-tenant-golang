@@ -6,6 +6,7 @@ import (
 	"clean-architecture/pkg/framework"
 	"clean-architecture/pkg/infrastructure"
 	"clean-architecture/pkg/tenancy"
+	"clean-architecture/pkg/utils"
 
 	"gorm.io/gorm"
 )
@@ -21,11 +22,20 @@ func NewService(db infrastructure.Database, logger framework.Logger) *Service {
 	return &Service{db: db, logger: logger}
 }
 
-// List returns widgets visible for the tenant (RLS enforced inside transaction).
-func (s *Service) List(tenantID string) ([]models.Widget, error) {
+// List returns a page of widgets visible for the tenant (RLS enforced inside transaction) and the total count for the tenant.
+func (s *Service) List(tenantID string, p utils.Pagination) ([]models.Widget, int64, error) {
 	var out []models.Widget
+	var total int64
 	err := tenancy.WithTenant(s.db.DB, tenantID, func(tx *gorm.DB) error {
-		return tx.Scopes(dbscope.TenantID(tenantID)).Order("created_at desc").Find(&out).Error
+		q := tx.Model(&models.Widget{}).Scopes(dbscope.TenantID(tenantID))
+		if err := q.Count(&total).Error; err != nil {
+			return err
+		}
+		return tx.Scopes(dbscope.TenantID(tenantID)).
+			Order("created_at desc").
+			Offset(p.Offset).
+			Limit(p.Limit).
+			Find(&out).Error
 	})
-	return out, err
+	return out, total, err
 }

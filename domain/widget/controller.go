@@ -4,6 +4,7 @@ import (
 	"clean-architecture/pkg/errorz"
 	"clean-architecture/pkg/framework"
 	"clean-architecture/pkg/responses"
+	"clean-architecture/pkg/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,7 +26,9 @@ func NewController(service *Service, logger framework.Logger) *Controller {
 // @Tags widgets
 // @Security BearerAuth
 // @Produce json
-// @Success 200 {array} models.Widget
+// @Param page query int false "Page (1-based)" default(1)
+// @Param limit query int false "Page size (max 100)" default(20)
+// @Success 200 {object} map[string]interface{} "data: array of models.Widget; pagination"
 // @Router /api/widgets [get]
 func (w *Controller) List(c *gin.Context) {
 	tid, ok := c.Get(framework.TenantID)
@@ -34,10 +37,11 @@ func (w *Controller) List(c *gin.Context) {
 		responses.HandleError(w.logger, c, errorz.ErrUnauthorizedAccess)
 		return
 	}
-	items, err := w.service.List(tidStr)
+	p := utils.BuildPagination(c)
+	items, total, err := w.service.List(tidStr, p)
 	if err != nil {
 		responses.HandleError(w.logger, c, err)
 		return
 	}
-	responses.JSON(c, 200, items)
+	responses.JSONPaginated(c, 200, items, total, p)
 }

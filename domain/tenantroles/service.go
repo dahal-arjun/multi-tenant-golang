@@ -39,9 +39,9 @@ func (s *Service) EffectivePermissionKeys(m *models.TenantMembership) ([]string,
 	return constants.MergePermissionKeys(base, custom), nil
 }
 
-// ListRoles returns roles for a tenant.
-func (s *Service) ListRoles(tenantID types.BinaryUUID) ([]models.TenantRole, error) {
-	return s.repo.ListRolesForTenant(tenantID)
+// ListRoles returns a page of roles for a tenant and the total count.
+func (s *Service) ListRoles(tenantID types.BinaryUUID, offset, limit int) ([]models.TenantRole, int64, error) {
+	return s.repo.ListRolesForTenant(tenantID, offset, limit)
 }
 
 // CreateRole creates a custom tenant role.
