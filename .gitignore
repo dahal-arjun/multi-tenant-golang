@@ -1,0 +1,12 @@
+.env
+log/access.log
+.git
+.worktrees
+log
+.idea/
+.DS_Store
+
+__debug_bin
+
+serviceAccountKey.json
+.test.env
