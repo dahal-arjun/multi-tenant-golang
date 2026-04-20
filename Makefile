@@ -27,4 +27,11 @@ lint-setup:
 	pre-commit install
 	pre-commit autoupdate
 
-.PHONY: migrate-status migrate-diff migrate-apply migrate-down migrate-hash swagger lint-setup
+test:
+	go test ./... -count=1
+
+# Requires PostgreSQL. Set TEST_DATABASE_URL (e.g. postgres://user:pass@localhost:5432/dbname?sslmode=disable).
+test-integration:
+	go test -tags=integration ./... -count=1
+
+.PHONY: migrate-status migrate-diff migrate-apply migrate-down migrate-hash swagger lint-setup test test-integration

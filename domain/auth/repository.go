@@ -109,7 +109,7 @@ func (r *Repository) CreateRefreshToken(tx *gorm.DB, row *models.RefreshToken) e
 // FindValidRefreshByHash finds a non-revoked, non-expired refresh token.
 func (r *Repository) FindValidRefreshByHash(hash string) (*models.RefreshToken, error) {
 	var row models.RefreshToken
-	err := r.Where("token_hash = ? AND revoked_at IS NULL AND expires_at > ?", hash, time.Now()).
+	err := r.Where("token_hash = ? AND revoked_at IS NULL AND expires_at > ?", hash, time.Now().UTC()).
 		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -150,7 +150,7 @@ func (r *Repository) CreatePasswordResetToken(tx *gorm.DB, row *models.PasswordR
 // FindValidPasswordResetByHash returns an unused, non-expired reset token row.
 func (r *Repository) FindValidPasswordResetByHash(hash string) (*models.PasswordResetToken, error) {
 	var row models.PasswordResetToken
-	err := r.Where("token_hash = ? AND used_at IS NULL AND expires_at > ?", hash, time.Now()).
+	err := r.Where("token_hash = ? AND used_at IS NULL AND expires_at > ?", hash, time.Now().UTC()).
 		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil

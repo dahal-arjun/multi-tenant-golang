@@ -83,6 +83,12 @@ Content-Type: application/json
 
 Response: **204 No Content** on success.
 
+## Tests
+
+- **Unit tests** (SQLite in-memory for domain services, no DB required): `make test`
+- **Integration tests** (PostgreSQL + `tenancy.WithTenant`): `TEST_DATABASE_URL='postgres://…' make test-integration`  
+  Uses build tag `integration` (`domain/auth/auth_integration_test.go`, `domain/widget/widget_integration_test.go`). Prefer a dedicated database; tests run `AutoMigrate` on the models they use.
+
 ## Health and docs
 
 - `GET /health-check`
