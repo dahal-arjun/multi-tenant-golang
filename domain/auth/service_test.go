@@ -364,3 +364,30 @@ func TestLogin_includesPlatformTokensForSystemManager(t *testing.T) {
 	_, err = jwtutil.ParsePlatformAccess([]byte(env.JWTSecret), *disc.PlatformAccessToken)
 	require.NoError(t, err)
 }
+
+func TestRefresh_platformRoundTrip(t *testing.T) {
+	repo, svc, env := setupAuthSQLite(t)
+	_, err := svc.Register(RegisterRequest{
+		Email:      "platrefresh@example.com",
+		Password:   "password123",
+		TenantName: "POrg",
+	})
+	require.NoError(t, err)
+	u, err := repo.FindUserByEmail("platrefresh@example.com")
+	require.NoError(t, err)
+	require.NoError(t, repo.Model(u).Update("role", constants.UserRoleSystemManager).Error)
+
+	disc, err := svc.Login(LoginRequest{Email: "platrefresh@example.com", Password: "password123"})
+	require.NoError(t, err)
+	require.NotNil(t, disc.PlatformRefreshToken)
+
+	tok2, err := svc.Refresh(*disc.PlatformRefreshToken)
+	require.NoError(t, err)
+	_, err = jwtutil.ParsePlatformAccess([]byte(env.JWTSecret), tok2.AccessToken)
+	require.NoError(t, err)
+
+	tok3, err := svc.Refresh(tok2.RefreshToken)
+	require.NoError(t, err)
+	_, err = jwtutil.ParsePlatformAccess([]byte(env.JWTSecret), tok3.AccessToken)
+	require.NoError(t, err)
+}
