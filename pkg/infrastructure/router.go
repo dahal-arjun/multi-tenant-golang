@@ -7,6 +7,8 @@ import (
 	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 // Router -> Gin Router
@@ -44,11 +46,23 @@ func NewRouter(
 		Repanic: true,
 	}))
 
-	httpRouter.GET("/health-check", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"data": "clean architecture 📺 API Up and Running"})
-	})
+	httpRouter.GET("/health-check", healthCheck)
+
+	if appEnv != "production" {
+		httpRouter.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 
 	return Router{
 		httpRouter,
 	}
+}
+
+// healthCheck godoc
+// @Summary      Health check
+// @Description  Liveness probe
+// @Tags         system
+// @Success      200  {object}  map[string]interface{}
+// @Router       /health-check [get]
+func healthCheck(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"data": "clean architecture 📺 API Up and Running"})
 }

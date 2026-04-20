@@ -1,0 +1,433 @@
+basePath: /
+definitions:
+  auth.ChangePasswordRequest:
+    properties:
+      current_password:
+        type: string
+      new_password:
+        minLength: 8
+        type: string
+    required:
+    - current_password
+    - new_password
+    type: object
+  auth.ForgotPasswordRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
+  auth.ForgotPasswordResponse:
+    properties:
+      message:
+        type: string
+      reset_token:
+        type: string
+    type: object
+  auth.LoginDiscoveryResponse:
+    properties:
+      pick_tenant_expires_in:
+        type: integer
+      pick_tenant_token:
+        type: string
+      tenants:
+        items:
+          $ref: '#/definitions/auth.TenantChoice'
+        type: array
+      user:
+        $ref: '#/definitions/auth.UserResponse'
+    type: object
+  auth.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  auth.LogoutRequest:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  auth.MeResponse:
+    properties:
+      is_active:
+        type: boolean
+      is_email_verified:
+        type: boolean
+      tenant_id:
+        type: string
+      tenant_role:
+        type: string
+      user:
+        $ref: '#/definitions/auth.UserResponse'
+    type: object
+  auth.RefreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  auth.RegisterRequest:
+    properties:
+      email:
+        type: string
+      password:
+        minLength: 8
+        type: string
+      tenant_name:
+        maxLength: 255
+        minLength: 1
+        type: string
+    required:
+    - email
+    - password
+    - tenant_name
+    type: object
+  auth.ResetPasswordRequest:
+    properties:
+      new_password:
+        minLength: 8
+        type: string
+      token:
+        type: string
+    required:
+    - new_password
+    - token
+    type: object
+  auth.TenantChoice:
+    properties:
+      name:
+        type: string
+      role:
+        type: string
+      slug:
+        type: string
+      tenant_id:
+        type: string
+    type: object
+  auth.TenantSessionRequest:
+    properties:
+      tenant_id:
+        type: string
+    required:
+    - tenant_id
+    type: object
+  auth.TokenResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      refresh_token:
+        type: string
+      token_type:
+        type: string
+    type: object
+  auth.UpdateMeRequest:
+    properties:
+      first_name:
+        type: string
+      first_name_ja:
+        type: string
+      last_name:
+        type: string
+      last_name_ja:
+        type: string
+    type: object
+  auth.UserResponse:
+    properties:
+      email:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      role:
+        type: string
+      uuid:
+        type: string
+    type: object
+  models.Widget:
+    properties:
+      created_at:
+        type: string
+      created_by_id:
+        type: integer
+      deleted_by_id:
+        type: integer
+      id:
+        type: string
+      tenant_id:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+      updated_by_id:
+        type: integer
+    type: object
+host: localhost:5000
+info:
+  contact: {}
+  description: 'Base template: PostgreSQL RLS, JWT auth, clean architecture.'
+  title: Multi-tenant API
+  version: "1.0"
+paths:
+  /api/auth/change-password:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Passwords
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Change password (authenticated)
+      tags:
+      - auth
+  /api/auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: In ENVIRONMENT=local the response may include reset_token for testing.
+        In production, send the token via your own channel (e.g. email).
+      parameters:
+      - description: Email
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.ForgotPasswordResponse'
+      summary: Request password reset
+      tags:
+      - auth
+  /api/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Returns tenant list and pick_tenant_token. Call POST /auth/tenant-session
+        with Bearer pick_tenant_token and JSON tenant_id to obtain access_token and
+        refresh_token.
+      parameters:
+      - description: Credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.LoginDiscoveryResponse'
+      summary: Login (discover tenants)
+      tags:
+      - auth
+  /api/auth/logout:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.LogoutRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Logout
+      tags:
+      - auth
+  /api/auth/me:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.MeResponse'
+      security:
+      - BearerAuth: []
+      summary: Current user
+      tags:
+      - auth
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.UpdateMeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.MeResponse'
+      security:
+      - BearerAuth: []
+      summary: Update current user profile
+      tags:
+      - auth
+  /api/auth/refresh:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+      summary: Refresh tokens
+      tags:
+      - auth
+  /api/auth/register:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Registration
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+      summary: Register user and tenant
+      tags:
+      - auth
+  /api/auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Token and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+      summary: Complete password reset
+      tags:
+      - auth
+  /api/auth/tenant-session:
+    post:
+      consumes:
+      - application/json
+      description: 'Authorization: Bearer pick_tenant_token from POST /auth/login
+        (not the final access token).'
+      parameters:
+      - description: Bearer {pick_tenant_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Tenant to use
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.TenantSessionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+      summary: Open session for a tenant
+      tags:
+      - auth
+  /api/widgets:
+    get:
+      description: Rows are filtered by PostgreSQL RLS using the tenant from the JWT.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Widget'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List widgets for current tenant
+      tags:
+      - widgets
+  /health-check:
+    get:
+      description: Liveness probe
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health check
+      tags:
+      - system
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and the access token.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

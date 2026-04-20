@@ -3,61 +3,99 @@ package seeds
 import (
 	"clean-architecture/domain/constants"
 	"clean-architecture/domain/models"
-	"clean-architecture/domain/user"
 	"clean-architecture/pkg/framework"
-	"clean-architecture/pkg/services"
+	"clean-architecture/pkg/infrastructure"
+	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
+// AdminSeed creates a platform admin user and default tenant when configured.
 type AdminSeed struct {
-	logger         framework.Logger
-	cognitoService services.CognitoAuthService
-	userService    *user.Service
-	env            *framework.Env
+	logger framework.Logger
+	env    *framework.Env
+	db     infrastructure.Database
 }
 
-// NewAdminSeed creates admin seed
-func NewAdminSeed(
-	logger framework.Logger,
-	cognitoService services.CognitoAuthService,
-	userService *user.Service,
-	env *framework.Env,
-) AdminSeed {
-	return AdminSeed{
-		logger:         logger,
-		cognitoService: cognitoService,
-		userService:    userService,
-		env:            env,
-	}
+// NewAdminSeed constructs AdminSeed.
+func NewAdminSeed(logger framework.Logger, env *framework.Env, db infrastructure.Database) AdminSeed {
+	return AdminSeed{logger: logger, env: env, db: db}
 }
 
-// Run the admin seed
+// Setup inserts admin user + tenant + owner membership if missing.
 func (s AdminSeed) Setup() {
-	email := s.env.AdminEmail
+	email := strings.TrimSpace(strings.ToLower(s.env.AdminEmail))
 	password := s.env.AdminPassword
 
 	s.logger.Info("🌱 seeding admin data...")
 
-	if _, err := s.cognitoService.GetUserByUsername(email); err != nil {
-		cognitoUUID, err := s.cognitoService.CreateAdminUser(email, password, true)
-		if err != nil {
-			s.logger.Error("failed to create the admin user in cognito", err.Error())
-			return
-		}
-		s.logger.Info("Successfully created admin user in cognito")
-
-		adminUser := models.User{
-			Email:           email,
-			CognitoUID:      aws.String(cognitoUUID),
-			Role:            constants.UserRoleAdmin,
-			IsEmailVerified: true,
-			IsActive:        true,
-		}
-		if err := s.userService.Create(&adminUser); err != nil {
-			s.logger.Error(err.Error())
-			return
-		}
+	if email == "" || password == "" {
+		s.logger.Info("skip admin seed: ADMIN_EMAIL or ADMIN_PASSWORD empty")
+		return
 	}
-	s.logger.Info("Admin user already exists")
+
+	var count int64
+	if err := s.db.Model(&models.User{}).Where("email = ?", email).Count(&count).Error; err != nil {
+		s.logger.Error("admin seed count failed", err.Error())
+		return
+	}
+	if count > 0 {
+		s.logger.Info("admin user already exists")
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		s.logger.Error("admin seed bcrypt failed", err.Error())
+		return
+	}
+
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		u := &models.User{
+			Email:           email,
+			PasswordHash:    string(hash),
+			Role:            constants.UserRoleAdmin,
+			IsActive:        true,
+			IsEmailVerified: true,
+		}
+		if err := tx.Create(u).Error; err != nil {
+			return err
+		}
+		actor := u.ID
+		t := &models.Tenant{
+			Name: "Platform",
+			Slug: "platform",
+			AuditFields: models.AuditFields{
+				CreatedByID: &actor,
+				UpdatedByID: &actor,
+			},
+		}
+		if err := tx.Create(t).Error; err != nil {
+			return err
+		}
+		m := &models.TenantMembership{
+			UserID:   u.ID,
+			TenantID: t.ID,
+			Role:     constants.TenantRoleOwner,
+			AuditFields: models.AuditFields{
+				CreatedByID: &actor,
+				UpdatedByID: &actor,
+			},
+		}
+		if err := tx.Create(m).Error; err != nil {
+			return err
+		}
+		tid := t.ID
+		return tx.Model(u).Updates(map[string]any{
+			"tenant_id":     tid,
+			"created_by_id": actor,
+			"updated_by_id": actor,
+		}).Error
+	})
+	if err != nil {
+		s.logger.Error("admin seed failed", err.Error())
+		return
+	}
+	s.logger.Info("admin user and platform tenant created")
 }

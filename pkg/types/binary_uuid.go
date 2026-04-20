@@ -7,6 +7,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 // BinaryUUID -> binary uuid wrapper over uuid.UUID
@@ -44,24 +46,50 @@ func (b *BinaryUUID) UnmarshalJSON(by []byte) error {
 	return err
 }
 
-// GormDataType -> sql data type for gorm
+// GormDataType default sql data type for gorm
 func (BinaryUUID) GormDataType() string {
-	return "binary(16)"
+	return "uuid"
+}
+
+// GormDBDataType dialect-specific column type
+func (BinaryUUID) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
+	switch db.Dialector.Name() {
+	case "postgres":
+		return "uuid"
+	default:
+		return "binary(16)"
+	}
 }
 
 // Scan -> scan value into BinaryUUID
 func (b *BinaryUUID) Scan(value any) error {
-	bytes, ok := value.([]byte)
-	if !ok {
-		return errors.New(fmt.Sprint("Failed to unmarshal JSONB value:", value))
+	if value == nil {
+		*b = BinaryUUID{}
+		return nil
 	}
-
-	data, err := uuid.FromBytes(bytes)
-	*b = BinaryUUID(data)
-	return err
+	switch v := value.(type) {
+	case []byte:
+		if len(v) == 16 {
+			data, err := uuid.FromBytes(v)
+			*b = BinaryUUID(data)
+			return err
+		}
+		parsed, err := uuid.ParseBytes(v)
+		*b = BinaryUUID(parsed)
+		return err
+	case string:
+		parsed, err := uuid.Parse(v)
+		*b = BinaryUUID(parsed)
+		return err
+	default:
+		return fmt.Errorf("unsupported BinaryUUID scan type %T", value)
+	}
 }
 
-// Value -> return BinaryUUID to []bytes binary(16)
+// Value -> return BinaryUUID for driver
 func (b BinaryUUID) Value() (driver.Value, error) {
-	return uuid.UUID(b).MarshalBinary()
+	if uuid.UUID(b) == uuid.Nil {
+		return nil, errors.New("BinaryUUID is nil")
+	}
+	return uuid.UUID(b).String(), nil
 }

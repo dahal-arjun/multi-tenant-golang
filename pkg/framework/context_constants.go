@@ -4,8 +4,14 @@ const (
 	// Claims -> authentication claims
 	Claims = "Claims"
 
-	// UID -> authenticated user's id
+	// UID -> authenticated user's public UUID (string)
 	UID = "UID"
+
+	// TenantID -> active tenant UUID (string) from access token
+	TenantID = "TenantID"
+
+	// UserDBID -> authenticated user's primary key (users.id) from access token
+	UserDBID = "UserDBID"
 
 	// File uploaded file from file upload middleware
 	File = "@uploaded_file"
@@ -21,8 +27,6 @@ const (
 
 	// Token -> bearer token
 	Token = "Token"
-
-	CognitoPass = "CognitoPass"
 
 	Role = "Role"
 )

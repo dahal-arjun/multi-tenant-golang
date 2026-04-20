@@ -1,4 +1,6 @@
-## Adding API Endpoint in the architecture 
+## Adding API Endpoint in the architecture
+
+For how **GORM models** relate to **SQL migrations** and Atlas, see [DatabaseAndMigrations.md](DatabaseAndMigrations.md). For **running the API locally** (Docker, migrations, logout, ports), see [LocalDevelopment.md](LocalDevelopment.md).
 
 - If package name is not known, read package name from `go.mod` file when importing internal packages.
 - If new feature is required, create inside `domain/<feature_name>/`. Feature generally has controller, route, service, module, serializer (dto) and repository all in separate files.
@@ -79,13 +81,15 @@ package user
 import (
 	"clean-architecture/pkg/framework"
 	"clean-architecture/pkg/infrastructure"
+	"clean-architecture/pkg/middlewares"
 )
 
 // Route struct
 type Route struct {
-	logger     framework.Logger
-	handler    infrastructure.Router
-	controller *Controller
+	logger        framework.Logger
+	handler       infrastructure.Router
+	controller    *Controller
+	jwtMiddleware middlewares.JWTAuthMiddleware
 }
 
 // NewRoute initializes a new Route instance
@@ -93,11 +97,13 @@ func NewRoute(
 	logger framework.Logger,
 	handler infrastructure.Router,
 	controller *Controller,
+	jwtMiddleware middlewares.JWTAuthMiddleware,
 ) *Route {
 	return &Route{
-		handler:    handler,
-		logger:     logger,
-		controller: controller,
+		handler:       handler,
+		logger:        logger,
+		controller:    controller,
+		jwtMiddleware: jwtMiddleware,
 	}
 }
 
@@ -106,9 +112,9 @@ func RegisterRoute(r *Route) {
 	r.logger.Info("Setting up routes")
 
 	api := r.handler.Group("/api")
-
-	api.POST("/user", r.controller.CreateUser)
-	api.GET("/user/:id", r.controller.GetUserByID)
+	protected := api.Group("")
+	protected.Use(r.jwtMiddleware.Handle())
+	protected.GET("/user/:id", r.controller.GetUserByID)
 }
 ```
 
@@ -150,14 +156,47 @@ var Module = fx.Module("user",
 
 By following this pattern, you can maintain a clean and modular structure for route registration in your application.
 
+## Reusable tenant and audit columns
+
+Embed these building blocks from `domain/models/mixins.go` on new tables:
+
+- **`AuditFields`** — `created_by_id`, `updated_by_id`, `deleted_by_id` (nullable FK → `users.id`). Set on writes when you know the actor (JWT exposes `users.id` as claim `idb` and in Gin as `framework.UserDBID`; `audit.WithActorID` is applied on the request context for GORM).
+- **`TenantBound`** — required `tenant_id` for rows that belong to one tenant (use with RLS + `pkg/tenancy.WithTenant`).
+- **`NullableTenant`** — optional `tenant_id` for cross-tenant identities such as `users` (primary/home tenant after registration).
+
+**Query scopes** (`pkg/dbscope`): use `db.Scopes(dbscope.TenantID(uuidString))` to constrain `tenant_id`, and `dbscope.ActiveRows` or `dbscope.TenantAndActive` when you used `Unscoped()` but still want an explicit `deleted_at IS NULL` filter. GORM already excludes soft-deleted rows when the model uses `gorm.DeletedAt`.
+
 ## Adding new models for a feature
 
 - For adding new db models for a feature, models are added to `domain/models` folder. 
 - After adding models, it is essential to diff the database with models and generate migration using atlas go. Since, makefile already contains the command for migration, you can check it. 
 - The generated migrations, need to be run as well. 
-- Some datatypes for new model generation; 
-  UUID -> types.BinaryUUID
-- Database we are using in MySQL so other variant of SQL in model definition might not work.
+- Some datatypes for new model generation:
+  - UUID → `types.BinaryUUID` with `gorm:"type:uuid"` on PostgreSQL (see `pkg/types/binary_uuid.go`).
+- The database is **PostgreSQL**. Atlas `gorm` env uses `--dialect postgres` in `atlas.hcl`. Local development database is defined under `infra/docker-compose.yml`.
+
+### Tenant-scoped queries and Row Level Security (RLS)
+
+- Tables that carry a `tenant_id` (for example `widgets`) have **RLS policies** in SQL migrations. Policies compare `tenant_id` to `current_setting('app.current_tenant_id', true)::uuid`.
+- Because the app uses a connection pool, you must set that GUC **inside a transaction** for each request that touches RLS-protected data. Use `pkg/tenancy.WithTenant`:
+
+```go
+import (
+	"clean-architecture/pkg/tenancy"
+	"gorm.io/gorm"
+)
+
+func (s *Service) ListWidgets(db *gorm.DB, tenantID string) ([]models.Widget, error) {
+	var out []models.Widget
+	err := tenancy.WithTenant(db, tenantID, func(tx *gorm.DB) error {
+		return tx.Find(&out).Error
+	})
+	return out, err
+}
+```
+
+- JWT access tokens carry the active `tenant_id`; read it from Gin context via `framework.TenantID` after `JWTAuthMiddleware`.
+- Do **not** query RLS-protected tables on a bare `*gorm.DB` session without `WithTenant`, or PostgreSQL will not see the expected tenant setting.
 
 Here is a sample model definition, that you might need.
 ```go
@@ -176,13 +215,13 @@ import (
 // User model
 type User struct {
 	gorm.Model
-	UUID       types.BinaryUUID `json:"uuid" gorm:"index;notnull;unique"`
-	CognitoUID *string          `json:"-" gorm:"index;size:50;unique"`
+	UUID         types.BinaryUUID `json:"uuid" gorm:"type:uuid;not null;uniqueIndex"`
+	PasswordHash string           `json:"-" gorm:"size:255;not null"`
 
 	FirstName   string `json:"first_name" gorm:"size:255"`
 	LastName    string `json:"last_name" gorm:"size:255"`
 
-	Email string             `json:"email" gorm:"notnull;index,unique;size:255"`
+	Email string             `json:"email" gorm:"notnull;uniqueIndex;size:255"`
 	Role  constants.UserRole `json:"role" gorm:"size:25" copier:"-"`
 }
 

@@ -13,15 +13,18 @@ import (
 // User model
 type User struct {
 	gorm.Model
-	UUID       types.BinaryUUID `json:"uuid" gorm:"index;notnull;unique"`
-	CognitoUID *string          `json:"-" gorm:"index;size:50;unique"`
+	NullableTenant
+	AuditFields
+
+	UUID         types.BinaryUUID `json:"uuid" gorm:"type:uuid;not null;uniqueIndex"`
+	PasswordHash string           `json:"-" gorm:"size:255;not null"`
 
 	FirstName   string `json:"first_name" gorm:"size:255"`
 	LastName    string `json:"last_name" gorm:"size:255"`
 	FirstNameJa string `json:"first_name_ja" gorm:"size:255"`
 	LastNameJa  string `json:"last_name_ja" gorm:"size:255"`
 
-	Email string             `json:"email" gorm:"notnull;index,unique;size:255"`
+	Email string             `json:"email" gorm:"notnull;uniqueIndex;size:255"`
 	Role  constants.UserRole `json:"role" gorm:"size:25" copier:"-"`
 
 	IsActive        bool `json:"is_active" gorm:"default:false"`

@@ -1,11 +1,18 @@
 package seeds
 
-import "go.uber.org/fx"
+import (
+	"clean-architecture/pkg/framework"
+
+	"go.uber.org/fx"
+)
 
 // Module exports seed module
 var Module = fx.Options(
-// fx.Provide(NewAdminSeed),
-// fx.Provide(NewSeeds),
+	fx.Provide(NewAdminSeed, NewSeeds),
+	fx.Invoke(func(logger framework.Logger, s Seeds) {
+		logger.Info("running seeds")
+		s.Setup()
+	}),
 )
 
 // Seed db seed

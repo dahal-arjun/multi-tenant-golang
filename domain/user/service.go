@@ -28,16 +28,7 @@ func (s Service) Create(user *models.User) error {
 	return s.repository.Create(user).Error
 }
 
-// GetOneUser gets one user
-func (s Service) GetUserByID(userID types.BinaryUUID) (user models.User, err error) {
-	return user, s.repository.First(&user, "id = ?", userID).Error
-}
-
-// GetRawUserFromID gets the raw user from id
-func (r *Repository) GetRawUserFromID(userID uint) (user *models.User, err error) {
-	r.logger.Info("[UserRepository...GetRawUserFromID]")
-
-	query := r.Model(&models.User{}).Where("id = ?", userID).First(&user)
-
-	return user, query.Error
+// GetUserByUUID gets one user by public UUID
+func (s Service) GetUserByUUID(userID types.BinaryUUID) (user models.User, err error) {
+	return user, s.repository.Where("uuid = ?", userID).First(&user).Error
 }

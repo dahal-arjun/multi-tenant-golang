@@ -63,7 +63,7 @@ func (u *Controller) GetUserByID(c *gin.Context) {
 		return
 	}
 
-	user, err := u.service.GetUserByID(userID)
+	user, err := u.service.GetUserByUUID(userID)
 	if err != nil {
 		responses.HandleError(u.logger, c, err)
 		return

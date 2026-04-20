@@ -3,35 +3,38 @@ package user
 import (
 	"clean-architecture/pkg/framework"
 	"clean-architecture/pkg/infrastructure"
+	"clean-architecture/pkg/middlewares"
 )
 
-// UserRoutes struct
+// Route wires user HTTP routes.
 type Route struct {
-	logger     framework.Logger
-	handler    infrastructure.Router
-	controller *Controller
+	logger        framework.Logger
+	handler       infrastructure.Router
+	controller    *Controller
+	jwtMiddleware middlewares.JWTAuthMiddleware
 }
 
+// NewRoute initializes a new Route instance
 func NewRoute(
 	logger framework.Logger,
 	handler infrastructure.Router,
 	controller *Controller,
+	jwtMiddleware middlewares.JWTAuthMiddleware,
 ) *Route {
 	return &Route{
-		handler:    handler,
-		logger:     logger,
-		controller: controller,
+		handler:       handler,
+		logger:        logger,
+		controller:    controller,
+		jwtMiddleware: jwtMiddleware,
 	}
-
 }
 
-// Setup user routes
+// RegisterRoute sets up user routes (JWT required).
 func RegisterRoute(r *Route) {
-	r.logger.Info("Setting up routes")
+	r.logger.Info("Setting up user routes")
 
 	api := r.handler.Group("/api")
-
-	api.POST("/user", r.controller.CreateUser)
-	api.GET("/user/:id", r.controller.GetUserByID)
-
+	protected := api.Group("")
+	protected.Use(r.jwtMiddleware.Handle())
+	protected.GET("/user/:id", r.controller.GetUserByID)
 }

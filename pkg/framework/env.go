@@ -13,8 +13,17 @@ type Env struct {
 	DBPassword string `mapstructure:"DB_PASS"`
 	DBHost     string `mapstructure:"DB_HOST"`
 	DBPort     string `mapstructure:"DB_PORT"`
-	DBName     string `mapstructure:"DB_NAME"`
-	DBType     string `mapstructure:"DB_TYPE"`
+	DBName string `mapstructure:"DB_NAME"`
+
+	JWTSecret           string `mapstructure:"JWT_SECRET"`
+	JWTAccessTTLMinutes int    `mapstructure:"JWT_ACCESS_TTL_MINUTES"`
+	JWTRefreshTTLDays   int    `mapstructure:"JWT_REFRESH_TTL_DAYS"`
+
+	// PasswordResetTTLMinutes is how long forgot-password tokens remain valid.
+	PasswordResetTTLMinutes int `mapstructure:"PASSWORD_RESET_TTL_MINUTES"`
+
+	// LoginPickTenantTTLMinutes is how long the post-login tenant-picker JWT remains valid.
+	LoginPickTenantTTLMinutes int `mapstructure:"LOGIN_PICK_TENANT_TTL_MINUTES"`
 
 	SentryDSN          string `mapstructure:"SENTRY_DSN"`
 	MaxMultipartMemory int64  `mapstructure:"MAX_MULTIPART_MEMORY"`
@@ -24,12 +33,6 @@ type Env struct {
 	AdminEmail    string `mapstructure:"ADMIN_EMAIL"`
 	AdminPassword string `mapstructure:"ADMIN_PASSWORD"`
 
-	AWSRegion          string `mapstructure:"AWS_REGION"`
-	AWSAccessKey       string `mapstructure:"AWS_ACCESS_KEY_ID"`
-	ClientID           string `mapstructure:"COGNITO_CLIENT_ID"`
-	UserPoolID         string `mapstructure:"COGNITO_USER_POOL_ID"`
-	AWSSecretAccessKey string `mapstructure:"AWS_SECRET_ACCESS_KEY"`
-	DBFORWARDPORT      string `mapstructure:"DB_FORWARD_PORT"`
 }
 
 var globalEnv = Env{
@@ -41,6 +44,7 @@ func GetEnv() Env {
 }
 
 func NewEnv(logger Logger) *Env {
+	viper.AutomaticEnv()
 	viper.SetConfigFile(".env")
 
 	err := viper.ReadInConfig()
@@ -49,10 +53,22 @@ func NewEnv(logger Logger) *Env {
 	}
 
 	viper.SetDefault("TIMEZONE", "UTC")
+	viper.SetDefault("JWT_ACCESS_TTL_MINUTES", 15)
+	viper.SetDefault("JWT_REFRESH_TTL_DAYS", 30)
+	viper.SetDefault("PASSWORD_RESET_TTL_MINUTES", 60)
+	viper.SetDefault("LOGIN_PICK_TENANT_TTL_MINUTES", 10)
 
 	err = viper.Unmarshal(&globalEnv)
 	if err != nil {
 		logger.Fatal("environment cant be loaded: ", err)
+	}
+
+	if globalEnv.JWTSecret == "" {
+		if globalEnv.Environment == "production" {
+			logger.Fatal("JWT_SECRET is required in production")
+		}
+		globalEnv.JWTSecret = "dev-insecure-jwt-secret-change-me"
+		logger.Warn("JWT_SECRET not set; using insecure default for non-production")
 	}
 
 	return &globalEnv
