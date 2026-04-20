@@ -1,4 +1,4 @@
--- atlas:txmode read-write
+-- atlas:txmode file
 
 ALTER TABLE "users" ADD COLUMN "tenant_id" uuid NULL;
 ALTER TABLE "users" ADD COLUMN "created_by_id" bigint NULL;

@@ -2,50 +2,81 @@
 
 ## Prerequisites
 
-- Go 1.22+
-- Docker (for PostgreSQL in `infra/`)
+- **Docker** (recommended full stack) **or** Go 1.22+ with local PostgreSQL if you run the API on the host.
 
-## Setup
+## One-command stack (recommended)
 
-1. Copy environment file:
+From the **repository root**:
 
-   `cp .env.example .env`
+1. Optional: `cp .env.example .env` and adjust ports/secrets (`make up-local` creates `.env` if it is missing).
 
-2. If ports are already in use on your machine, edit `.env`:
-
-   - **`DB_PORT`** / **`DB_FORWARD_PORT`** — host port mapped to Postgres (default `5432`). If another Postgres uses `5432`, use e.g. `5433` for both so the app and Docker use the same host port.
-   - **`SERVER_PORT`** — HTTP port for the API (default `5000`).
-   - **`ADMINER_PORT`** — Adminer UI (default `8080`).
-
-3. Start the database (and Adminer):
+2. Start **Postgres**, run **Atlas migrations**, **API** (live-mounted source), and **Adminer**:
 
    ```bash
-   docker compose -f infra/docker-compose.yml --env-file .env up -d
+   make up-local
    ```
 
-4. Apply migrations:
+   This runs **`make swagger`** first (regenerates `docs/` from handler comments), prints local URLs, then starts Compose. Equivalent to `docker compose up --build` plus that prep step.
+
+   Run in the background: `make up-local-detached` (then `docker compose logs -f api`).
+
+3. Open **Swagger**: `http://localhost:<SERVER_PORT>/swagger/index.html` (see `SERVER_PORT` in `.env`; the API listens on port **5000 inside the container**, mapped to `SERVER_PORT` on the host).
+
+4. **Adminer**: `http://localhost:<ADMINER_PORT>` — use server **`postgres`**, database/user/password from `.env`.
+
+5. Stop: `make down-local` · wipe DB volume: `make down-local-clean`
+
+**Requires Docker Compose v2.10+** (for `service_completed_successfully` after migrations).
+
+### If migrations fail (dirty / old volume)
+
+```bash
+make down-local-clean
+make up-local
+```
+
+Or baseline an existing DB (host workflows): see [DatabaseAndMigrations.md](DatabaseAndMigrations.md) and the “Atlas” section below.
+
+---
+
+## Run API on the host (optional)
+
+Use this when you prefer `go run` without the API container (you still need PostgreSQL).
+
+1. `cp .env.example .env`
+
+2. Ports: **`DB_PORT`** / **`DB_FORWARD_PORT`**, **`SERVER_PORT`**, **`ADMINER_PORT`** if defaults conflict.
+
+3. Start **only** the database tools (no root `docker-compose` API stack):
 
    ```bash
-   make migrate-apply
+   docker compose up -d postgres adminer
    ```
 
-   The Makefile runs Atlas via `go run` (no global `atlas` install required). If `migrate apply` errors against your Postgres version, you can apply SQL manually:
+4. Install [Atlas CLI](https://atlasgo.io/getting-started#installation) (do not use `go run ariga.io/atlas/cmd/atlas@latest`; that module is stuck at v0.13.1 and often breaks on PostgreSQL).
 
-   ```bash
-   for f in migrations/*.sql; do
-     docker exec -i multi-tenant-pg psql -U postgres -d app -v ON_ERROR_STOP=1 < "$f"
-   done
-   ```
+5. `make migrate-apply` (or `make migrate-apply-docker` with `DB_HOST=host.docker.internal` when Postgres runs in Docker on macOS/Windows).
 
-   (Adjust container name / user / database if you changed them in `.env`.)
+6. `go run . app:serve`
 
-5. Run the API:
+`docker compose` sets **`DB_HOST=postgres`** only for the **api** service in the full stack. On the host, keep **`DB_HOST=localhost`** (and `DB_PORT`/`DB_FORWARD_PORT` aligned) in `.env`.
 
-   ```bash
-   go run . app:serve
-   ```
+Manual SQL fallback:
 
-   The command loads `.env` via `godotenv` and Viper. Environment variables set in your shell override values from `.env` when the same key is present (see `NewEnv` in `pkg/framework/env.go`).
+```bash
+for f in migrations/*.sql; do
+  docker exec -i multi-tenant-pg psql -U postgres -d app -v ON_ERROR_STOP=1 < "$f"
+done
+```
+
+(Adjust container name / user / database from `.env`.)
+
+**If Atlas says** `connected database is not clean…`:
+
+- Wipe volume: `docker compose down -v`, then `docker compose up -d postgres`, then `make migrate-apply`.
+- Or `make migrate-baseline BASELINE=20260422120000` if the schema already matches all migrations (adjust version as needed).
+
+---
 
 ## Auth endpoints (summary)
 

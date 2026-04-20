@@ -173,7 +173,7 @@ Embed these building blocks from `domain/models/mixins.go` on new tables:
 - The generated migrations, need to be run as well. 
 - Some datatypes for new model generation:
   - UUID → `types.BinaryUUID` with `gorm:"type:uuid"` on PostgreSQL (see `pkg/types/binary_uuid.go`).
-- The database is **PostgreSQL**. Atlas `gorm` env uses `--dialect postgres` in `atlas.hcl`. Local development database is defined under `infra/docker-compose.yml`.
+- The database is **PostgreSQL**. Atlas `gorm` env uses `--dialect postgres` in `atlas.hcl`. Local Docker stack is the root [`docker-compose.yml`](../docker-compose.yml).
 
 ### Tenant-scoped queries and Row Level Security (RLS)
 

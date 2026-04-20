@@ -21,25 +21,34 @@ make lint-setup
 
 ## Run application
 
--   Setup environment variables
-
 ```zsh
-cp .env.example .env
+cp .env.example .env   # optional — make up-local creates .env if missing
 ```
 
--   Update your database credentials environment variables in `.env` file
--   Update `STORAGE_BUCKET_NAME` in `.env` with your AWS S3 bucket name.
+### Docker (full dev stack — recommended)
 
-### Locally
+PostgreSQL, Atlas migrations, API (Go with bind-mounted source), and Adminer:
 
--   Run `go run main.go app:serve` to start the server.
--   There are other commands available as well. You can run `go run main.go -help` to know about other commands available.
+```zsh
+make up-local
+# or: docker compose up --build
+```
 
-### Using `Docker`
+- API: `http://localhost:<SERVER_PORT>` (from `.env`; default `5000`)
+- Swagger: `http://localhost:<SERVER_PORT>/swagger/index.html`
+- Stop: `make down-local` · reset DB volume: `make down-local-clean`
 
-> Ensure Docker is already installed in the machine.
+Details: [devguide/LocalDevelopment.md](devguide/LocalDevelopment.md).
 
--   Start server using command `docker-compose up -d` or `sudo docker-compose up -d` if there are permission issues.
+### Locally (API on host, DB in Docker)
+
+```zsh
+docker compose up -d postgres adminer
+make migrate-apply
+go run . app:serve
+```
+
+Other CLI commands: `go run . -help`.
 
 ---
 
@@ -49,7 +58,7 @@ cp .env.example .env
 | -------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `/bootstrap`                     | Contains modules required to start the application.                                                    |
 | `/console`                       | Server commands; run `go run main.go -help` for all available commands.                                |
-| `/docker`                        | Docker files required for `docker-compose`.                                                            |
+| `/infra`                         | Postgres init scripts; see root `docker-compose.yml` for the stack.                                     |
 | `/docs`                          | Contains project documentation.                                                                        |
 | `/domain`                        | Contains models, constants, and a folder for each domain with controller, repository, routes, and services. |
 | `/domain/constants`              | Global application constants.                                                                          |
@@ -69,7 +78,8 @@ cp .env.example .env
 | `/seeds`                         | Seed data for database tables.                                                                         |
 | `/tests`                         | Application tests (unit, integration, etc.).                                                           |
 | `.env.example`                   | sample environment variables                                                                           |
-| `docker-compose.yml`             | `docker compose` file for service application via `Docker`                                             |
+| `docker-compose.yml`             | Postgres, migrate (Atlas), API, Adminer for local development.                                        |
+| `Dockerfile.dev`                 | Development image for the API service.                                                                 |
 | `main.go`                        | entry-point of the server                                                                              |
 | `Makefile`                       | stores frequently used commands; can be invoked using `make` command                                   |
 

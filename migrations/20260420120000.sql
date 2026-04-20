@@ -1,4 +1,4 @@
--- atlas:txmode read-write
+-- atlas:txmode file
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 

@@ -1,0 +1,16 @@
+# Development API image (source mounted at runtime via docker-compose).
+FROM golang:1.22-bookworm
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+CMD ["/bin/sh", "-c", "go run . app:serve"]

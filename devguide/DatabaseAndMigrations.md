@@ -22,6 +22,10 @@ GORM’s `AutoMigrate` does **not** reliably express or maintain RLS, extensions
 
 ## Atlas
 
+Install a **current** Atlas CLI ([install guide](https://atlasgo.io/getting-started#installation)). The Go module `ariga.io/atlas/cmd/atlas` is no longer updated on the proxy (last tag v0.13.1); `go run …/cmd/atlas@latest` commonly fails against PostgreSQL with `postgres: unexpected number of rows: 1`. The project `Makefile` invokes the `atlas` binary (`ATLAS` overrideable); use `make migrate-apply-docker` if you prefer the official container.
+
+If `migrate apply` reports the database is **not clean** (often after manual `psql` applies or a reused volume without `atlas_schema_revisions`), see **LocalDevelopment.md** (`migrate-baseline` vs `docker compose down -v`).
+
 [`atlas.hcl`](../atlas.hcl) wires the **Atlas GORM provider** so you can run `make migrate-diff` to **propose** new SQL from model changes. You still **review and edit** the generated SQL—especially for RLS and policies—then commit it and run `make migrate-hash` when files change.
 
 ## Practical rule

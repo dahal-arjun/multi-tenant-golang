@@ -1,0 +1,12 @@
+.git
+.gitignore
+.cursor
+*.md
+.vscode
+.idea
+**/agent-tools
+**/terminals
+hooks
+.env
+.env.*
+!.env.example

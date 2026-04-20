@@ -1,4 +1,4 @@
--- atlas:txmode read-write
+-- atlas:txmode file
 
 CREATE TABLE "password_reset_tokens" (
   "id" uuid NOT NULL PRIMARY KEY,
