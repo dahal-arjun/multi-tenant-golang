@@ -3,6 +3,7 @@ package auth
 import (
 	"clean-architecture/domain/constants"
 	"clean-architecture/domain/models"
+	"clean-architecture/domain/tenantroles"
 	"clean-architecture/pkg/errorz"
 	"clean-architecture/pkg/framework"
 	"clean-architecture/pkg/jwtutil"
@@ -25,14 +26,15 @@ type Service struct {
 	repo   Repository
 	env    *framework.Env
 	logger framework.Logger
+	perms  tenantroles.PermCalculator
 
 	resendMu   sync.Mutex
 	resendHits map[string][]time.Time
 }
 
 // NewService constructs the auth service.
-func NewService(repo Repository, env *framework.Env, logger framework.Logger) *Service {
-	return &Service{repo: repo, env: env, logger: logger}
+func NewService(repo Repository, env *framework.Env, logger framework.Logger, perms tenantroles.PermCalculator) *Service {
+	return &Service{repo: repo, env: env, logger: logger, perms: perms}
 }
 
 // Register creates user, tenant, owner membership, and returns tokens.
@@ -101,7 +103,7 @@ func (s *Service) Register(req RegisterRequest) (*TokenResponse, error) {
 		}).Error; err != nil {
 			return err
 		}
-		tr, err := s.issueTokensTx(tx, u, t.ID, string(constants.TenantRoleOwner))
+		tr, err := s.issueTokensTx(tx, u, m)
 		if err != nil {
 			return err
 		}
@@ -184,6 +186,19 @@ func (s *Service) Login(req LoginRequest) (*LoginDiscoveryResponse, error) {
 	}
 	out.PickTenantToken = pick
 	out.PickTenantExpiresIn = int64(ttl.Seconds())
+
+	if constants.IsPlatformStaff(u.Role) {
+		pt, err := s.issuePlatformTokensOutsideTx(u)
+		if err != nil {
+			return nil, err
+		}
+		if pt != nil {
+			out.PlatformAccessToken = &pt.AccessToken
+			out.PlatformRefreshToken = &pt.RefreshToken
+			exp := pt.ExpiresIn
+			out.PlatformExpiresIn = &exp
+		}
+	}
 	return out, nil
 }
 
@@ -201,7 +216,7 @@ func (s *Service) TenantSession(pickToken string, tenantIDStr string) (*TokenRes
 	if err != nil {
 		return nil, err
 	}
-	if u == nil || !u.IsActive || u.ID != uint(claims.UserDBID) {
+	if u == nil || !u.IsActive || !u.IsEmailVerified || u.ID != uint(claims.UserDBID) {
 		return nil, errorz.ErrInvalidPickToken
 	}
 	tid, err := types.ShouldParseUUID(tenantIDStr)
@@ -218,7 +233,7 @@ func (s *Service) TenantSession(pickToken string, tenantIDStr string) (*TokenRes
 
 	var out *TokenResponse
 	err = s.repo.Transaction(func(tx *gorm.DB) error {
-		tr, err := s.issueTokensTx(tx, u, tid, string(m.Role))
+		tr, err := s.issueTokensTx(tx, u, m)
 		if err != nil {
 			return err
 		}
@@ -246,7 +261,28 @@ func (s *Service) Refresh(refreshPlain string) (*TokenResponse, error) {
 	if u == nil || !u.IsActive {
 		return nil, errorz.ErrInvalidRefreshToken
 	}
-	m, err := s.repo.FindMembership(u.ID, row.TenantID)
+
+	if row.TenantID == nil {
+		if !constants.IsPlatformStaff(u.Role) {
+			return nil, errorz.ErrInvalidRefreshToken
+		}
+		var out *TokenResponse
+		err = s.repo.Transaction(func(tx *gorm.DB) error {
+			if err := s.repo.RevokeRefresh(tx, row.ID); err != nil {
+				return err
+			}
+			tr, err := s.issuePlatformTokensTx(tx, u)
+			if err != nil {
+				return err
+			}
+			out = tr
+			return nil
+		})
+		return out, err
+	}
+
+	tid := *row.TenantID
+	m, err := s.repo.FindMembership(u.ID, tid)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +295,7 @@ func (s *Service) Refresh(refreshPlain string) (*TokenResponse, error) {
 		if err := s.repo.RevokeRefresh(tx, row.ID); err != nil {
 			return err
 		}
-		tr, err := s.issueTokensTx(tx, u, row.TenantID, string(m.Role))
+		tr, err := s.issueTokensTx(tx, u, m)
 		if err != nil {
 			return err
 		}
@@ -468,6 +504,10 @@ func (s *Service) Me(userUUIDStr string, tenantIDStr string) (*MeResponse, error
 	if m == nil {
 		return nil, errorz.ErrMembershipNotFound
 	}
+	permKeys, err := s.perms.EffectivePermissionKeys(m)
+	if err != nil {
+		return nil, err
+	}
 	return &MeResponse{
 		User: UserResponse{
 			UUID:      u.UUID.String(),
@@ -478,16 +518,25 @@ func (s *Service) Me(userUUIDStr string, tenantIDStr string) (*MeResponse, error
 		},
 		TenantID:      tid.String(),
 		TenantRole:    string(m.Role),
+		Permissions:   permKeys,
 		IsActive:      u.IsActive,
 		EmailVerified: u.IsEmailVerified,
 	}, nil
 }
 
-func (s *Service) issueTokensTx(tx *gorm.DB, u *models.User, tenantID types.BinaryUUID, tenantRole string) (*TokenResponse, error) {
+func (s *Service) issueTokensTx(tx *gorm.DB, u *models.User, m *models.TenantMembership) (*TokenResponse, error) {
 	accessTTL := time.Duration(s.env.JWTAccessTTLMinutes) * time.Minute
 	refreshTTL := time.Duration(s.env.JWTRefreshTTLDays) * 24 * time.Hour
 
-	access, err := jwtutil.SignAccess([]byte(s.env.JWTSecret), u.UUID.String(), int64(u.ID), tenantID.String(), tenantRole, accessTTL)
+	permKeys, err := s.perms.EffectivePermissionKeys(m)
+	if err != nil {
+		return nil, err
+	}
+	trid := ""
+	if m.TenantRoleID != nil {
+		trid = m.TenantRoleID.String()
+	}
+	access, err := jwtutil.SignAccess([]byte(s.env.JWTSecret), u.UUID.String(), int64(u.ID), m.TenantID.String(), string(m.Role), trid, permKeys, accessTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -498,9 +547,10 @@ func (s *Service) issueTokensTx(tx *gorm.DB, u *models.User, tenantID types.Bina
 	sum := sha256.Sum256([]byte(plain))
 	hash := hex.EncodeToString(sum[:])
 	actor := u.ID
+	tidCopy := m.TenantID
 	rt := &models.RefreshToken{
 		UserID:    u.ID,
-		TenantID:  tenantID,
+		TenantID:  &tidCopy,
 		TokenHash: hash,
 		ExpiresAt: time.Now().UTC().Add(refreshTTL),
 		AuditFields: models.AuditFields{
@@ -517,6 +567,54 @@ func (s *Service) issueTokensTx(tx *gorm.DB, u *models.User, tenantID types.Bina
 		TokenType:    "Bearer",
 		ExpiresIn:    int64(accessTTL.Seconds()),
 	}, nil
+}
+
+func (s *Service) issuePlatformTokensTx(tx *gorm.DB, u *models.User) (*TokenResponse, error) {
+	accessTTL := time.Duration(s.env.JWTAccessTTLMinutes) * time.Minute
+	refreshTTL := time.Duration(s.env.JWTRefreshTTLDays) * 24 * time.Hour
+	access, err := jwtutil.SignPlatformAccess([]byte(s.env.JWTSecret), u.UUID.String(), int64(u.ID), string(u.Role), accessTTL)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := randomToken(32)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256([]byte(plain))
+	hash := hex.EncodeToString(sum[:])
+	actor := u.ID
+	rt := &models.RefreshToken{
+		UserID:    u.ID,
+		TenantID:  nil,
+		TokenHash: hash,
+		ExpiresAt: time.Now().UTC().Add(refreshTTL),
+		AuditFields: models.AuditFields{
+			CreatedByID: &actor,
+			UpdatedByID: &actor,
+		},
+	}
+	if err := s.repo.CreateRefreshToken(tx, rt); err != nil {
+		return nil, err
+	}
+	return &TokenResponse{
+		AccessToken:  access,
+		RefreshToken: plain,
+		TokenType:    "Bearer",
+		ExpiresIn:    int64(accessTTL.Seconds()),
+	}, nil
+}
+
+func (s *Service) issuePlatformTokensOutsideTx(u *models.User) (*TokenResponse, error) {
+	var out *TokenResponse
+	err := s.repo.Transaction(func(tx *gorm.DB) error {
+		tr, err := s.issuePlatformTokensTx(tx, u)
+		if err != nil {
+			return err
+		}
+		out = tr
+		return nil
+	})
+	return out, err
 }
 
 // Signup creates an unverified user without a tenant and emails (or returns) a verification token.
@@ -734,7 +832,7 @@ func (s *Service) CreateTenantWithPickToken(pickToken, tenantName string) (*Toke
 		}).Error; err != nil {
 			return err
 		}
-		tr, err := s.issueTokensTx(tx, u, t.ID, string(constants.TenantRoleOwner))
+		tr, err := s.issueTokensTx(tx, u, m)
 		if err != nil {
 			return err
 		}
@@ -745,7 +843,9 @@ func (s *Service) CreateTenantWithPickToken(pickToken, tenantName string) (*Toke
 }
 
 // CreateTenantInvitation adds a pending invite; caller must be owner or admin of the tenant.
-func (s *Service) CreateTenantInvitation(actorID uint, tenantIDStr, inviteEmail, roleStr string) (*TenantInviteResponse, error) {
+func (s *Service) CreateTenantInvitation(actorID uint, tenantIDStr string, req CreateTenantInviteRequest) (*TenantInviteResponse, error) {
+	roleStr := req.Role
+	inviteEmail := req.Email
 	role, err := parseTenantRole(roleStr)
 	if err != nil {
 		return nil, err
@@ -788,6 +888,21 @@ func (s *Service) CreateTenantInvitation(actorID uint, tenantIDStr, inviteEmail,
 			return nil, errorz.ErrInviteAlreadyMember
 		}
 	}
+	var customRoleID *types.BinaryUUID
+	if req.TenantRoleID != nil && strings.TrimSpace(*req.TenantRoleID) != "" {
+		rid, err := types.ShouldParseUUID(strings.TrimSpace(*req.TenantRoleID))
+		if err != nil {
+			return nil, err
+		}
+		tr, err := s.repo.FindTenantRoleByID(rid)
+		if err != nil {
+			return nil, err
+		}
+		if tr == nil || tr.TenantID != tid {
+			return nil, errorz.ErrBadRequest.JoinError("tenant_role_id is not valid for this tenant")
+		}
+		customRoleID = &rid
+	}
 	ttl := s.tenantInviteTTL()
 	plain, err := randomToken(32)
 	if err != nil {
@@ -804,6 +919,7 @@ func (s *Service) CreateTenantInvitation(actorID uint, tenantIDStr, inviteEmail,
 			TenantID:        tid,
 			Email:           email,
 			Role:            role,
+			TenantRoleID:    customRoleID,
 			TokenHash:       hash,
 			InvitedByUserID: actorID,
 			ExpiresAt:       time.Now().UTC().Add(ttl),
@@ -895,9 +1011,10 @@ func (s *Service) AcceptInvite(token, password string) (*TokenResponse, error) {
 			}
 		}
 		member := &models.TenantMembership{
-			UserID:   u.ID,
-			TenantID: inv.TenantID,
-			Role:     inv.Role,
+			UserID:       u.ID,
+			TenantID:     inv.TenantID,
+			Role:         inv.Role,
+			TenantRoleID: inv.TenantRoleID,
 			AuditFields: models.AuditFields{
 				CreatedByID: &u.ID,
 				UpdatedByID: &u.ID,
@@ -909,7 +1026,7 @@ func (s *Service) AcceptInvite(token, password string) (*TokenResponse, error) {
 		if err := s.repo.MarkTenantInvitationAccepted(tx, inv.ID); err != nil {
 			return err
 		}
-		tr, err := s.issueTokensTx(tx, u, inv.TenantID, string(inv.Role))
+		tr, err := s.issueTokensTx(tx, u, member)
 		if err != nil {
 			return err
 		}

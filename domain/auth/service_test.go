@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"clean-architecture/domain/constants"
 	"clean-architecture/domain/models"
 	"clean-architecture/pkg/errorz"
 	"clean-architecture/pkg/jwtutil"
@@ -300,7 +301,10 @@ func TestInvite_acceptNewUser(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ms, 1)
 
-	inv, err := svc.CreateTenantInvitation(owner.ID, ms[0].TenantID.String(), "invitee-new@example.com", "member")
+	inv, err := svc.CreateTenantInvitation(owner.ID, ms[0].TenantID.String(), CreateTenantInviteRequest{
+		Email: "invitee-new@example.com",
+		Role:  "member",
+	})
 	require.NoError(t, err)
 	require.NotNil(t, inv.InviteToken)
 
@@ -323,13 +327,40 @@ func TestInvite_memberCannotInvite(t *testing.T) {
 	require.NoError(t, err)
 	ms, err := repo.ListMembershipsForUser(owner.ID)
 	require.NoError(t, err)
-	inv, err := svc.CreateTenantInvitation(owner.ID, ms[0].TenantID.String(), "m1@example.com", "member")
+	inv, err := svc.CreateTenantInvitation(owner.ID, ms[0].TenantID.String(), CreateTenantInviteRequest{
+		Email: "m1@example.com",
+		Role:  "member",
+	})
 	require.NoError(t, err)
 	_, err = svc.AcceptInvite(*inv.InviteToken, "password8888")
 	require.NoError(t, err)
 	member, err := repo.FindUserByEmail("m1@example.com")
 	require.NoError(t, err)
-	_, err = svc.CreateTenantInvitation(member.ID, ms[0].TenantID.String(), "x@example.com", "member")
+	_, err = svc.CreateTenantInvitation(member.ID, ms[0].TenantID.String(), CreateTenantInviteRequest{
+		Email: "x@example.com",
+		Role:  "member",
+	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, errorz.ErrTenantInviteForbidden))
+}
+
+func TestLogin_includesPlatformTokensForSystemManager(t *testing.T) {
+	repo, svc, env := setupAuthSQLite(t)
+	_, err := svc.Register(RegisterRequest{
+		Email:      "sysmgr@example.com",
+		Password:   "password123",
+		TenantName: "Org",
+	})
+	require.NoError(t, err)
+	u, err := repo.FindUserByEmail("sysmgr@example.com")
+	require.NoError(t, err)
+	require.NoError(t, repo.Model(u).Update("role", constants.UserRoleSystemManager).Error)
+
+	disc, err := svc.Login(LoginRequest{Email: "sysmgr@example.com", Password: "password123"})
+	require.NoError(t, err)
+	require.NotNil(t, disc.PlatformAccessToken)
+	require.NotNil(t, disc.PlatformRefreshToken)
+	require.NotNil(t, disc.PlatformExpiresIn)
+	_, err = jwtutil.ParsePlatformAccess([]byte(env.JWTSecret), *disc.PlatformAccessToken)
+	require.NoError(t, err)
 }

@@ -4,6 +4,7 @@ package auth
 
 import (
 	"clean-architecture/domain/models"
+	"clean-architecture/domain/tenantroles"
 	"clean-architecture/pkg/errorz"
 	"clean-architecture/pkg/framework"
 	"clean-architecture/pkg/infrastructure"
@@ -36,6 +37,8 @@ func setupPostgres(t *testing.T) (Repository, *Service, *framework.Env) {
 		&models.PasswordResetToken{},
 		&models.EmailVerificationToken{},
 		&models.TenantInvitation{},
+		&models.TenantRole{},
+		&models.TenantRolePermission{},
 		&models.Widget{},
 	)
 	require.NoError(t, err)
@@ -48,8 +51,11 @@ func setupPostgres(t *testing.T) (Repository, *Service, *framework.Env) {
 		LoginPickTenantTTLMinutes: 10,
 		Environment:               "local",
 	}
-	repo := NewRepository(infrastructure.Database{DB: db}, framework.CreateTestLogger(t))
-	svc := NewService(repo, env, framework.CreateTestLogger(t))
+	log := framework.CreateTestLogger(t)
+	repo := NewRepository(infrastructure.Database{DB: db}, log)
+	trepo := tenantroles.NewRepository(infrastructure.Database{DB: db}, log)
+	tcalc := tenantroles.NewService(trepo)
+	svc := NewService(repo, env, log, tcalc)
 	return repo, svc, env
 }
 

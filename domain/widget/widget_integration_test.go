@@ -5,6 +5,7 @@ package widget
 import (
 	"clean-architecture/domain/auth"
 	"clean-architecture/domain/models"
+	"clean-architecture/domain/tenantroles"
 	"clean-architecture/pkg/framework"
 	"clean-architecture/pkg/infrastructure"
 	"clean-architecture/pkg/jwtutil"
@@ -36,6 +37,8 @@ func setupWidgetPostgres(t *testing.T) (*gorm.DB, *framework.Env) {
 		&models.PasswordResetToken{},
 		&models.EmailVerificationToken{},
 		&models.TenantInvitation{},
+		&models.TenantRole{},
+		&models.TenantRolePermission{},
 		&models.Widget{},
 	)
 	require.NoError(t, err)
@@ -55,7 +58,9 @@ func TestIntegration_Postgres_WidgetList(t *testing.T) {
 	db, env := setupWidgetPostgres(t)
 	log := framework.CreateTestLogger(t)
 	repo := auth.NewRepository(infrastructure.Database{DB: db}, log)
-	svcAuth := auth.NewService(repo, env, log)
+	trepo := tenantroles.NewRepository(infrastructure.Database{DB: db}, log)
+	tcalc := tenantroles.NewService(trepo)
+	svcAuth := auth.NewService(repo, env, log, tcalc)
 
 	email := "widget-user@example.com"
 	_, err := svcAuth.Register(auth.RegisterRequest{

@@ -161,7 +161,7 @@ const docTemplate = `{
         },
         "/api/auth/login": {
             "post": {
-                "description": "Requires a verified email. Returns tenant list and pick_tenant_token (also when tenants is empty, for POST /auth/create-tenant). Call POST /auth/tenant-session with Bearer pick_tenant_token and JSON tenant_id to obtain access_token and refresh_token.",
+                "description": "Requires a verified email. Returns tenant list and pick_tenant_token (also when tenants is empty, for POST /auth/create-tenant). For users with role admin or system_manager, may also return platform_access_token and platform_refresh_token for /api/platform/*. Call POST /auth/tenant-session with Bearer pick_tenant_token and JSON tenant_id to obtain tenant access_token and refresh_token.",
                 "consumes": [
                     "application/json"
                 ],
@@ -561,6 +561,268 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/platform/health": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Platform API health (authenticated)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/platform/tenants/summary": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requires a platform access token (from login for system_manager/admin). Does not use tenant RLS.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "platform"
+                ],
+                "summary": "Cross-tenant counts for operators",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/platform.TenantSummary"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tenant-members/role": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-roles"
+                ],
+                "summary": "Assign a custom tenant role to a member",
+                "parameters": [
+                    {
+                        "description": "Target user and role",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tenantroles.AssignMemberTenantRoleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/api/tenant-roles": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-roles"
+                ],
+                "summary": "List tenant-defined roles",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.TenantRole"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-roles"
+                ],
+                "summary": "Create a tenant role",
+                "parameters": [
+                    {
+                        "description": "Role",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tenantroles.CreateTenantRoleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.TenantRole"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tenant-roles/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "tenant-roles"
+                ],
+                "summary": "Delete a tenant role",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Role UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-roles"
+                ],
+                "summary": "Update a tenant role",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Role UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tenantroles.UpdateTenantRoleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.TenantRole"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tenant-roles/{id}/permissions": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tenant-roles"
+                ],
+                "summary": "Replace permissions for a tenant role",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Role UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Permission keys",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tenantroles.SetTenantRolePermissionsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/api/widgets": {
             "get": {
                 "security": [
@@ -653,6 +915,9 @@ const docTemplate = `{
                 },
                 "role": {
                     "type": "string"
+                },
+                "tenant_role_id": {
+                    "type": "string"
                 }
             }
         },
@@ -700,6 +965,15 @@ const docTemplate = `{
                 "pick_tenant_token": {
                     "type": "string"
                 },
+                "platform_access_token": {
+                    "type": "string"
+                },
+                "platform_expires_in": {
+                    "type": "integer"
+                },
+                "platform_refresh_token": {
+                    "type": "string"
+                },
                 "tenants": {
                     "type": "array",
                     "items": {
@@ -745,6 +1019,12 @@ const docTemplate = `{
                 },
                 "is_email_verified": {
                     "type": "boolean"
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "tenant_id": {
                     "type": "string"
@@ -959,6 +1239,41 @@ const docTemplate = `{
                 }
             }
         },
+        "models.TenantRole": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by_id": {
+                    "type": "integer"
+                },
+                "deleted_by_id": {
+                    "type": "integer"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by_id": {
+                    "type": "integer"
+                }
+            }
+        },
         "models.Widget": {
             "type": "object",
             "properties": {
@@ -985,6 +1300,80 @@ const docTemplate = `{
                 },
                 "updated_by_id": {
                     "type": "integer"
+                }
+            }
+        },
+        "platform.TenantSummary": {
+            "type": "object",
+            "properties": {
+                "tenant_count": {
+                    "type": "integer"
+                },
+                "user_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "tenantroles.AssignMemberTenantRoleRequest": {
+            "type": "object",
+            "required": [
+                "user_id"
+            ],
+            "properties": {
+                "tenant_role_id": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "tenantroles.CreateTenantRoleRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "slug": {
+                    "type": "string",
+                    "maxLength": 100
+                }
+            }
+        },
+        "tenantroles.SetTenantRolePermissionsRequest": {
+            "type": "object",
+            "required": [
+                "permissions"
+            ],
+            "properties": {
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "tenantroles.UpdateTenantRoleRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
                 }
             }
         }

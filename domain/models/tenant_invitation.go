@@ -20,14 +20,16 @@ type TenantInvitation struct {
 	TenantID         types.BinaryUUID     `json:"tenant_id" gorm:"type:uuid;not null;index"`
 	Email            string               `json:"email" gorm:"size:255;not null"`
 	Role             constants.TenantRole `json:"role" gorm:"size:50;not null"`
+	TenantRoleID     *types.BinaryUUID    `json:"tenant_role_id,omitempty" gorm:"type:uuid;index"`
 	TokenHash        string               `json:"-" gorm:"size:64;not null"`
 	InvitedByUserID  uint                 `json:"invited_by_user_id" gorm:"not null"`
 	ExpiresAt        time.Time            `json:"expires_at" gorm:"not null"`
 	AcceptedAt       *time.Time           `json:"accepted_at,omitempty"`
 	RevokedAt        *time.Time           `json:"revoked_at,omitempty"`
 
-	Tenant    Tenant `json:"-" gorm:"foreignKey:TenantID"`
-	InvitedBy User   `json:"-" gorm:"foreignKey:InvitedByUserID"`
+	Tenant     Tenant     `json:"-" gorm:"foreignKey:TenantID"`
+	TenantRole *TenantRole `json:"-" gorm:"foreignKey:TenantRoleID"`
+	InvitedBy  User       `json:"-" gorm:"foreignKey:InvitedByUserID"`
 }
 
 func (inv *TenantInvitation) BeforeCreate(tx *gorm.DB) error {

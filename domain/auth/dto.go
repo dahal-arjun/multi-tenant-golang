@@ -48,8 +48,9 @@ type AcceptInviteRequest struct {
 
 // CreateTenantInviteRequest is sent by a tenant owner/admin to invite by email.
 type CreateTenantInviteRequest struct {
-	Email string `json:"email" binding:"required,email"`
-	Role  string `json:"role" binding:"required"`
+	Email        string  `json:"email" binding:"required,email"`
+	Role         string  `json:"role" binding:"required"`
+	TenantRoleID *string `json:"tenant_role_id,omitempty" binding:"omitempty,uuid"`
 }
 
 // TenantInviteResponse confirms the invite; invite_token is only set in ENVIRONMENT=local.
@@ -78,6 +79,9 @@ type LoginDiscoveryResponse struct {
 	Tenants               []TenantChoice `json:"tenants"`
 	PickTenantToken       string         `json:"pick_tenant_token"`
 	PickTenantExpiresIn   int64          `json:"pick_tenant_expires_in"`
+	PlatformAccessToken   *string        `json:"platform_access_token,omitempty"`
+	PlatformRefreshToken  *string        `json:"platform_refresh_token,omitempty"`
+	PlatformExpiresIn     *int64         `json:"platform_expires_in,omitempty"`
 }
 
 // TenantSessionRequest exchanges pick_tenant_token + tenant_id for access and refresh tokens.
@@ -117,6 +121,7 @@ type MeResponse struct {
 	User          UserResponse `json:"user"`
 	TenantID      string       `json:"tenant_id"`
 	TenantRole    string       `json:"tenant_role"`
+	Permissions   []string     `json:"permissions,omitempty"`
 	IsActive      bool         `json:"is_active"`
 	EmailVerified bool         `json:"is_email_verified"`
 }

@@ -118,6 +118,8 @@ func TestJWTAuthMiddleware_success_setsContext(t *testing.T) {
 		99,
 		"660e8400-e29b-41d4-a716-446655440001",
 		"admin",
+		"",
+		[]string{"widgets.read"},
 		time.Hour,
 	)
 	require.NoError(t, err)
@@ -125,6 +127,7 @@ func TestJWTAuthMiddleware_success_setsContext(t *testing.T) {
 	var sawUID any
 	var sawTenant any
 	var sawRole any
+	var sawPerms any
 	var sawDBID any
 	var actorOK bool
 	var actor uint
@@ -134,6 +137,7 @@ func TestJWTAuthMiddleware_success_setsContext(t *testing.T) {
 		sawUID, _ = c.Get(framework.UID)
 		sawTenant, _ = c.Get(framework.TenantID)
 		sawRole, _ = c.Get(framework.Role)
+		sawPerms, _ = c.Get(framework.Permissions)
 		sawDBID, _ = c.Get(framework.UserDBID)
 		actor, actorOK = audit.ActorID(c.Request.Context())
 		c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -148,6 +152,7 @@ func TestJWTAuthMiddleware_success_setsContext(t *testing.T) {
 	require.Equal(t, "550e8400-e29b-41d4-a716-446655440000", sawUID)
 	require.Equal(t, "660e8400-e29b-41d4-a716-446655440001", sawTenant)
 	require.Equal(t, "admin", sawRole)
+	require.Equal(t, []string{"widgets.read"}, sawPerms)
 	require.Equal(t, uint(99), sawDBID)
 	require.True(t, actorOK)
 	require.Equal(t, uint(99), actor)

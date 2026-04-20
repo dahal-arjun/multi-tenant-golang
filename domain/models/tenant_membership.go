@@ -19,8 +19,12 @@ type TenantMembership struct {
 	TenantID types.BinaryUUID `json:"tenant_id" gorm:"type:uuid;not null;index"`
 	Role     constants.TenantRole `json:"role" gorm:"size:50;not null"`
 
-	User   User   `json:"-" gorm:"foreignKey:UserID"`
-	Tenant Tenant `json:"-" gorm:"foreignKey:TenantID"`
+	// TenantRoleID optionally links a custom tenant role; effective permissions are builtin(role) ∪ grants(role).
+	TenantRoleID *types.BinaryUUID `json:"tenant_role_id,omitempty" gorm:"type:uuid;index"`
+
+	User       User        `json:"-" gorm:"foreignKey:UserID"`
+	Tenant     Tenant      `json:"-" gorm:"foreignKey:TenantID"`
+	TenantRole *TenantRole `json:"tenant_role,omitempty" gorm:"foreignKey:TenantRoleID"`
 }
 
 func (*TenantMembership) TableName() string {

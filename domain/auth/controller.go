@@ -183,7 +183,7 @@ func (a *Controller) CreateTenantInvite(c *gin.Context) {
 		responses.HandleValidationError(a.logger, c, err)
 		return
 	}
-	out, err := a.service.CreateTenantInvitation(userDBID, tenantIDStr, req.Email, req.Role)
+	out, err := a.service.CreateTenantInvitation(userDBID, tenantIDStr, req)
 	if err != nil {
 		responses.HandleError(a.logger, c, err)
 		return
@@ -193,7 +193,7 @@ func (a *Controller) CreateTenantInvite(c *gin.Context) {
 
 // Login godoc
 // @Summary Login (discover tenants)
-// @Description Requires a verified email. Returns tenant list and pick_tenant_token (also when tenants is empty, for POST /auth/create-tenant). Call POST /auth/tenant-session with Bearer pick_tenant_token and JSON tenant_id to obtain access_token and refresh_token.
+// @Description Requires a verified email. Returns tenant list and pick_tenant_token (also when tenants is empty, for POST /auth/create-tenant). For users with role admin or system_manager, may also return platform_access_token and platform_refresh_token for /api/platform/*. Call POST /auth/tenant-session with Bearer pick_tenant_token and JSON tenant_id to obtain tenant access_token and refresh_token.
 // @Tags auth
 // @Accept json
 // @Produce json

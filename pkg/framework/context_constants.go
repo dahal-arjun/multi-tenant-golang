@@ -29,4 +29,10 @@ const (
 	Token = "Token"
 
 	Role = "Role"
+
+	// Permissions -> effective permission keys from tenant JWT ([]string)
+	Permissions = "Permissions"
+
+	// PlatformUserRole -> users.role string from platform JWT (admin / system_manager)
+	PlatformUserRole = "PlatformUserRole"
 )

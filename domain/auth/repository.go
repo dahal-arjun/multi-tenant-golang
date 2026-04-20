@@ -232,3 +232,16 @@ func (r *Repository) MarkTenantInvitationAccepted(tx *gorm.DB, id types.BinaryUU
 	now := time.Now()
 	return tx.Model(&models.TenantInvitation{}).Where("id = ?", id).Update("accepted_at", now).Error
 }
+
+// FindTenantRoleByID loads a tenant role row (any tenant).
+func (r *Repository) FindTenantRoleByID(id types.BinaryUUID) (*models.TenantRole, error) {
+	var row models.TenantRole
+	err := r.Where("id = ?", id).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}

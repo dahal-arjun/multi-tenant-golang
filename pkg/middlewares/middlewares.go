@@ -8,6 +8,7 @@ var Module = fx.Options(
 		NewRateLimitMiddleware,
 		NewMiddlewares,
 		NewJWTAuthMiddleware,
+		NewPlatformJWTAuthMiddleware,
 	),
 )
 

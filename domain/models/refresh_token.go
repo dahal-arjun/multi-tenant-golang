@@ -19,14 +19,15 @@ type RefreshToken struct {
 
 	AuditFields
 
-	UserID    uint             `json:"user_id" gorm:"not null;index"`
-	TenantID  types.BinaryUUID `json:"tenant_id" gorm:"type:uuid;not null;index"`
+	UserID    uint `json:"user_id" gorm:"not null;index"`
+	// TenantID is nil for platform (system manager) refresh tokens.
+	TenantID *types.BinaryUUID `json:"tenant_id,omitempty" gorm:"type:uuid;index"`
 	TokenHash string           `json:"-" gorm:"size:64;not null"`
 	ExpiresAt time.Time  `json:"expires_at" gorm:"not null"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 
-	User   User   `json:"-" gorm:"foreignKey:UserID"`
-	Tenant Tenant `json:"-" gorm:"foreignKey:TenantID"`
+	User   User    `json:"-" gorm:"foreignKey:UserID"`
+	Tenant Tenant  `json:"-" gorm:"foreignKey:TenantID"`
 }
 
 func (r *RefreshToken) BeforeCreate(tx *gorm.DB) error {

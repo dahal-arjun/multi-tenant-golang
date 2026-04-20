@@ -11,7 +11,7 @@ import (
 func TestSignParseAccess_roundTrip(t *testing.T) {
 	secret := []byte("test-secret-at-least-32-bytes-long!")
 	ttl := 15 * time.Minute
-	tok, err := SignAccess(secret, "550e8400-e29b-41d4-a716-446655440000", 42, "660e8400-e29b-41d4-a716-446655440001", "owner", ttl)
+	tok, err := SignAccess(secret, "550e8400-e29b-41d4-a716-446655440000", 42, "660e8400-e29b-41d4-a716-446655440001", "owner", "", []string{"widgets.read"}, ttl)
 	require.NoError(t, err)
 
 	claims, err := ParseAccess(secret, tok)
@@ -20,6 +20,7 @@ func TestSignParseAccess_roundTrip(t *testing.T) {
 	require.Equal(t, int64(42), claims.UserDBID)
 	require.Equal(t, "660e8400-e29b-41d4-a716-446655440001", claims.TenantID)
 	require.Equal(t, "owner", claims.TenantRole)
+	require.Equal(t, []string{"widgets.read"}, claims.Permissions)
 	require.Equal(t, accessJWTIssuer, claims.Issuer)
 }
 
@@ -69,11 +70,24 @@ func TestSignParseTenantPick_roundTrip(t *testing.T) {
 
 func TestParseTenantPick_rejectsAccessToken(t *testing.T) {
 	secret := []byte("test-secret-at-least-32-bytes-long!")
-	access, err := SignAccess(secret, "550e8400-e29b-41d4-a716-446655440000", 1, "660e8400-e29b-41d4-a716-446655440001", "member", time.Minute)
+	access, err := SignAccess(secret, "550e8400-e29b-41d4-a716-446655440000", 1, "660e8400-e29b-41d4-a716-446655440001", "member", "", nil, time.Minute)
 	require.NoError(t, err)
 
 	_, err = ParseTenantPick(secret, access)
 	require.Error(t, err)
+}
+
+func TestSignParsePlatformAccess_roundTrip(t *testing.T) {
+	secret := []byte("test-secret-at-least-32-bytes-long!")
+	ttl := 15 * time.Minute
+	tok, err := SignPlatformAccess(secret, "550e8400-e29b-41d4-a716-446655440000", 42, "admin", ttl)
+	require.NoError(t, err)
+
+	claims, err := ParsePlatformAccess(secret, tok)
+	require.NoError(t, err)
+	require.Equal(t, platformJWTIssuer, claims.Issuer)
+	require.Equal(t, "admin", claims.PlatformRole)
+	require.Equal(t, int64(42), claims.UserDBID)
 }
 
 func TestParseTenantPick_expired(t *testing.T) {

@@ -28,6 +28,8 @@ definitions:
         type: string
       role:
         type: string
+      tenant_role_id:
+        type: string
     required:
     - email
     - role
@@ -61,6 +63,12 @@ definitions:
         type: integer
       pick_tenant_token:
         type: string
+      platform_access_token:
+        type: string
+      platform_expires_in:
+        type: integer
+      platform_refresh_token:
+        type: string
       tenants:
         items:
           $ref: '#/definitions/auth.TenantChoice'
@@ -91,6 +99,10 @@ definitions:
         type: boolean
       is_email_verified:
         type: boolean
+      permissions:
+        items:
+          type: string
+        type: array
       tenant_id:
         type: string
       tenant_role:
@@ -231,6 +243,29 @@ definitions:
     required:
     - token
     type: object
+  models.TenantRole:
+    properties:
+      created_at:
+        type: string
+      created_by_id:
+        type: integer
+      deleted_by_id:
+        type: integer
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      slug:
+        type: string
+      tenant_id:
+        type: string
+      updated_at:
+        type: string
+      updated_by_id:
+        type: integer
+    type: object
   models.Widget:
     properties:
       created_at:
@@ -249,6 +284,56 @@ definitions:
         type: string
       updated_by_id:
         type: integer
+    type: object
+  platform.TenantSummary:
+    properties:
+      tenant_count:
+        type: integer
+      user_count:
+        type: integer
+    type: object
+  tenantroles.AssignMemberTenantRoleRequest:
+    properties:
+      tenant_role_id:
+        type: string
+      user_id:
+        type: integer
+    required:
+    - user_id
+    type: object
+  tenantroles.CreateTenantRoleRequest:
+    properties:
+      description:
+        maxLength: 500
+        type: string
+      name:
+        maxLength: 255
+        minLength: 1
+        type: string
+      slug:
+        maxLength: 100
+        type: string
+    required:
+    - name
+    type: object
+  tenantroles.SetTenantRolePermissionsRequest:
+    properties:
+      permissions:
+        items:
+          type: string
+        type: array
+    required:
+    - permissions
+    type: object
+  tenantroles.UpdateTenantRoleRequest:
+    properties:
+      description:
+        maxLength: 500
+        type: string
+      name:
+        maxLength: 255
+        minLength: 1
+        type: string
     type: object
 host: localhost:5000
 info:
@@ -357,9 +442,10 @@ paths:
       consumes:
       - application/json
       description: Requires a verified email. Returns tenant list and pick_tenant_token
-        (also when tenants is empty, for POST /auth/create-tenant). Call POST /auth/tenant-session
-        with Bearer pick_tenant_token and JSON tenant_id to obtain access_token and
-        refresh_token.
+        (also when tenants is empty, for POST /auth/create-tenant). For users with
+        role admin or system_manager, may also return platform_access_token and platform_refresh_token
+        for /api/platform/*. Call POST /auth/tenant-session with Bearer pick_tenant_token
+        and JSON tenant_id to obtain tenant access_token and refresh_token.
       parameters:
       - description: Credentials
         in: body
@@ -611,6 +697,166 @@ paths:
       summary: Invite user to current tenant by email
       tags:
       - auth
+  /api/platform/health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Platform API health (authenticated)
+      tags:
+      - platform
+  /api/platform/tenants/summary:
+    get:
+      description: Requires a platform access token (from login for system_manager/admin).
+        Does not use tenant RLS.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/platform.TenantSummary'
+      security:
+      - BearerAuth: []
+      summary: Cross-tenant counts for operators
+      tags:
+      - platform
+  /api/tenant-members/role:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Target user and role
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tenantroles.AssignMemberTenantRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Assign a custom tenant role to a member
+      tags:
+      - tenant-roles
+  /api/tenant-roles:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.TenantRole'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List tenant-defined roles
+      tags:
+      - tenant-roles
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tenantroles.CreateTenantRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.TenantRole'
+      security:
+      - BearerAuth: []
+      summary: Create a tenant role
+      tags:
+      - tenant-roles
+  /api/tenant-roles/{id}:
+    delete:
+      parameters:
+      - description: Role UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a tenant role
+      tags:
+      - tenant-roles
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tenantroles.UpdateTenantRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.TenantRole'
+      security:
+      - BearerAuth: []
+      summary: Update a tenant role
+      tags:
+      - tenant-roles
+  /api/tenant-roles/{id}/permissions:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Role UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Permission keys
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tenantroles.SetTenantRolePermissionsRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Replace permissions for a tenant role
+      tags:
+      - tenant-roles
   /api/widgets:
     get:
       description: Rows are filtered by PostgreSQL RLS using the tenant from the JWT.

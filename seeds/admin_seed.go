@@ -55,7 +55,7 @@ func (s AdminSeed) Setup() {
 		u := &models.User{
 			Email:           email,
 			PasswordHash:    string(hash),
-			Role:            constants.UserRoleAdmin,
+			Role:            constants.UserRoleSystemManager,
 			IsActive:        true,
 			IsEmailVerified: true,
 		}
