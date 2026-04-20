@@ -3,6 +3,7 @@ package models
 import (
 	"clean-architecture/domain/constants"
 	"clean-architecture/pkg/types"
+	"time"
 
 	_ "ariga.io/atlas-provider-gorm/gormschema"
 
@@ -29,6 +30,10 @@ type User struct {
 
 	IsActive        bool `json:"is_active" gorm:"default:false"`
 	IsEmailVerified bool `json:"is_email_verified" gorm:"default:false"`
+
+	// EmailVerificationDeadline is when an unverified user may still log in to see ErrEmailNotVerified;
+	// after this instant, login returns ErrVerificationExpired until resend-verification extends it.
+	EmailVerificationDeadline *time.Time `json:"-" gorm:"column:email_verification_deadline"`
 }
 
 func (u *User) BeforeCreate(tx *gorm.DB) error {

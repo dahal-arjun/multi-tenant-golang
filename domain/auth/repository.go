@@ -166,3 +166,69 @@ func (r *Repository) MarkPasswordResetUsed(tx *gorm.DB, id types.BinaryUUID) err
 	now := time.Now()
 	return tx.Model(&models.PasswordResetToken{}).Where("id = ?", id).Update("used_at", now).Error
 }
+
+// InvalidatePendingEmailVerifications marks unused verification tokens as used for the user.
+func (r *Repository) InvalidatePendingEmailVerifications(tx *gorm.DB, userID uint) error {
+	now := time.Now()
+	return tx.Model(&models.EmailVerificationToken{}).
+		Where("user_id = ? AND used_at IS NULL", userID).
+		Update("used_at", now).Error
+}
+
+// CreateEmailVerificationToken persists an email verification row.
+func (r *Repository) CreateEmailVerificationToken(tx *gorm.DB, row *models.EmailVerificationToken) error {
+	return tx.Create(row).Error
+}
+
+// FindValidEmailVerificationByHash returns an unused, non-expired verification token row.
+func (r *Repository) FindValidEmailVerificationByHash(hash string) (*models.EmailVerificationToken, error) {
+	var row models.EmailVerificationToken
+	err := r.Where("token_hash = ? AND used_at IS NULL AND expires_at > ?", hash, time.Now().UTC()).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// MarkEmailVerificationUsed sets used_at on a verification token.
+func (r *Repository) MarkEmailVerificationUsed(tx *gorm.DB, id types.BinaryUUID) error {
+	now := time.Now()
+	return tx.Model(&models.EmailVerificationToken{}).Where("id = ?", id).Update("used_at", now).Error
+}
+
+// RevokePendingTenantInvitations marks pending invites revoked for a tenant + email.
+func (r *Repository) RevokePendingTenantInvitations(tx *gorm.DB, tenantID types.BinaryUUID, email string) error {
+	now := time.Now()
+	return tx.Model(&models.TenantInvitation{}).
+		Where("tenant_id = ? AND email = ? AND accepted_at IS NULL AND revoked_at IS NULL", tenantID, email).
+		Update("revoked_at", now).Error
+}
+
+// CreateTenantInvitation persists an invitation row.
+func (r *Repository) CreateTenantInvitation(tx *gorm.DB, row *models.TenantInvitation) error {
+	return tx.Create(row).Error
+}
+
+// FindValidTenantInvitationByHash returns a non-revoked, non-accepted, non-expired invite.
+func (r *Repository) FindValidTenantInvitationByHash(hash string) (*models.TenantInvitation, error) {
+	var row models.TenantInvitation
+	err := r.Where("token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?", hash, time.Now().UTC()).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// MarkTenantInvitationAccepted sets accepted_at on an invitation.
+func (r *Repository) MarkTenantInvitationAccepted(tx *gorm.DB, id types.BinaryUUID) error {
+	now := time.Now()
+	return tx.Model(&models.TenantInvitation{}).Where("id = ?", id).Update("accepted_at", now).Error
+}

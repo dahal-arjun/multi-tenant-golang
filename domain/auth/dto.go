@@ -7,6 +7,57 @@ type RegisterRequest struct {
 	TenantName string `json:"tenant_name" binding:"required,min=1,max=255"`
 }
 
+// SignupRequest creates an unverified user without a tenant (self-serve onboarding).
+type SignupRequest struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=8"`
+}
+
+// SignupResponse confirms signup; verification_token is only set in ENVIRONMENT=local.
+type SignupResponse struct {
+	Message             string  `json:"message"`
+	VerificationToken *string `json:"verification_token,omitempty"`
+}
+
+// VerifyEmailRequest completes email verification with a token from the email (or local dev response).
+type VerifyEmailRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+// ResendVerificationRequest asks for a new verification email.
+type ResendVerificationRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// ResendVerificationResponse is uniform for unknown emails; verification_token may be set in local dev.
+type ResendVerificationResponse struct {
+	Message             string  `json:"message"`
+	VerificationToken *string `json:"verification_token,omitempty"`
+}
+
+// CreateTenantRequest creates the first tenant using a pick_tenant_token from login.
+type CreateTenantRequest struct {
+	TenantName string `json:"tenant_name" binding:"required,min=1,max=255"`
+}
+
+// AcceptInviteRequest completes an invitation with token and password (existing users must supply their current password).
+type AcceptInviteRequest struct {
+	Token    string `json:"token" binding:"required"`
+	Password string `json:"password" binding:"required,min=8"`
+}
+
+// CreateTenantInviteRequest is sent by a tenant owner/admin to invite by email.
+type CreateTenantInviteRequest struct {
+	Email string `json:"email" binding:"required,email"`
+	Role  string `json:"role" binding:"required"`
+}
+
+// TenantInviteResponse confirms the invite; invite_token is only set in ENVIRONMENT=local.
+type TenantInviteResponse struct {
+	Message     string  `json:"message"`
+	InviteToken *string `json:"invite_token,omitempty"`
+}
+
 // LoginRequest authenticates with email and password. Response lists tenants; use pick_tenant_token with POST /auth/tenant-session.
 type LoginRequest struct {
 	Email    string `json:"email" binding:"required,email"`

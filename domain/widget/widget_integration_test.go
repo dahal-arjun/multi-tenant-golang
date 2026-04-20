@@ -34,6 +34,8 @@ func setupWidgetPostgres(t *testing.T) (*gorm.DB, *framework.Env) {
 		&models.TenantMembership{},
 		&models.RefreshToken{},
 		&models.PasswordResetToken{},
+		&models.EmailVerificationToken{},
+		&models.TenantInvitation{},
 		&models.Widget{},
 	)
 	require.NoError(t, err)

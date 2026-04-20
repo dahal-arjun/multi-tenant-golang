@@ -6,6 +6,7 @@ import (
 	"clean-architecture/pkg/jwtutil"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -60,7 +61,7 @@ func TestLogin_invalidPassword(t *testing.T) {
 	require.True(t, errors.Is(err, errorz.ErrInvalidCredentials))
 }
 
-func TestLogin_noTenants_noPickToken(t *testing.T) {
+func TestLogin_noTenants_stillGetsPickToken(t *testing.T) {
 	repo, svc, _ := setupAuthSQLite(t)
 	_, err := svc.Register(RegisterRequest{
 		Email:      "orphan@example.com",
@@ -76,8 +77,8 @@ func TestLogin_noTenants_noPickToken(t *testing.T) {
 	disc, err := svc.Login(LoginRequest{Email: "orphan@example.com", Password: "password123"})
 	require.NoError(t, err)
 	require.Empty(t, disc.Tenants)
-	require.Empty(t, disc.PickTenantToken)
-	require.Zero(t, disc.PickTenantExpiresIn)
+	require.NotEmpty(t, disc.PickTenantToken)
+	require.Greater(t, disc.PickTenantExpiresIn, int64(0))
 }
 
 func TestTenantSession_invalidPickToken(t *testing.T) {
@@ -220,4 +221,115 @@ func TestChangePassword(t *testing.T) {
 
 	_, err = svc.Login(LoginRequest{Email: "chg@example.com", Password: "updated9999"})
 	require.NoError(t, err)
+}
+
+func TestSignup_verify_login_createTenant(t *testing.T) {
+	_, svc, env := setupAuthSQLite(t)
+	signup, err := svc.Signup(SignupRequest{Email: "new@example.com", Password: "password123"})
+	require.NoError(t, err)
+	require.NotNil(t, signup.VerificationToken)
+
+	_, err = svc.Login(LoginRequest{Email: "new@example.com", Password: "password123"})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, errorz.ErrEmailNotVerified))
+
+	require.NoError(t, svc.VerifyEmail(*signup.VerificationToken))
+
+	disc, err := svc.Login(LoginRequest{Email: "new@example.com", Password: "password123"})
+	require.NoError(t, err)
+	require.Empty(t, disc.Tenants)
+	require.NotEmpty(t, disc.PickTenantToken)
+
+	tok, err := svc.CreateTenantWithPickToken(disc.PickTenantToken, "My Co")
+	require.NoError(t, err)
+	require.NotEmpty(t, tok.AccessToken)
+	claims, err := jwtutil.ParseAccess([]byte(env.JWTSecret), tok.AccessToken)
+	require.NoError(t, err)
+	require.NotEmpty(t, claims.TenantID)
+}
+
+func TestLogin_verificationExpired_thenResendAndVerify(t *testing.T) {
+	repo, svc, _ := setupAuthSQLite(t)
+	signup, err := svc.Signup(SignupRequest{Email: "late@example.com", Password: "password123"})
+	require.NoError(t, err)
+	require.NotNil(t, signup.VerificationToken)
+	u, err := repo.FindUserByEmail("late@example.com")
+	require.NoError(t, err)
+	past := time.Now().UTC().Add(-1 * time.Hour)
+	require.NoError(t, repo.Model(u).Updates(map[string]any{
+		"email_verification_deadline": past,
+	}).Error)
+
+	_, err = svc.Login(LoginRequest{Email: "late@example.com", Password: "password123"})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, errorz.ErrVerificationExpired))
+
+	resend, err := svc.ResendVerification("late@example.com", "127.0.0.1")
+	require.NoError(t, err)
+	require.NotNil(t, resend.VerificationToken)
+	require.NoError(t, svc.VerifyEmail(*resend.VerificationToken))
+
+	_, err = svc.Login(LoginRequest{Email: "late@example.com", Password: "password123"})
+	require.NoError(t, err)
+}
+
+func TestResendVerification_rateLimited(t *testing.T) {
+	_, svc, _ := setupAuthSQLite(t)
+	_, err := svc.Signup(SignupRequest{Email: "rate@example.com", Password: "password123"})
+	require.NoError(t, err)
+	for i := 0; i < 3; i++ {
+		_, err := svc.ResendVerification("rate@example.com", "10.0.0.1")
+		require.NoError(t, err)
+	}
+	_, err = svc.ResendVerification("rate@example.com", "10.0.0.1")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, errorz.ErrResendVerificationLimited))
+}
+
+func TestInvite_acceptNewUser(t *testing.T) {
+	repo, svc, env := setupAuthSQLite(t)
+	_, err := svc.Register(RegisterRequest{
+		Email:      "owner-invite@example.com",
+		Password:   "password123",
+		TenantName: "Acme",
+	})
+	require.NoError(t, err)
+	owner, err := repo.FindUserByEmail("owner-invite@example.com")
+	require.NoError(t, err)
+	ms, err := repo.ListMembershipsForUser(owner.ID)
+	require.NoError(t, err)
+	require.Len(t, ms, 1)
+
+	inv, err := svc.CreateTenantInvitation(owner.ID, ms[0].TenantID.String(), "invitee-new@example.com", "member")
+	require.NoError(t, err)
+	require.NotNil(t, inv.InviteToken)
+
+	tok, err := svc.AcceptInvite(*inv.InviteToken, "password9999")
+	require.NoError(t, err)
+	require.NotEmpty(t, tok.AccessToken)
+	_, err = jwtutil.ParseAccess([]byte(env.JWTSecret), tok.AccessToken)
+	require.NoError(t, err)
+}
+
+func TestInvite_memberCannotInvite(t *testing.T) {
+	repo, svc, _ := setupAuthSQLite(t)
+	_, err := svc.Register(RegisterRequest{
+		Email:      "owner2@example.com",
+		Password:   "password123",
+		TenantName: "Co",
+	})
+	require.NoError(t, err)
+	owner, err := repo.FindUserByEmail("owner2@example.com")
+	require.NoError(t, err)
+	ms, err := repo.ListMembershipsForUser(owner.ID)
+	require.NoError(t, err)
+	inv, err := svc.CreateTenantInvitation(owner.ID, ms[0].TenantID.String(), "m1@example.com", "member")
+	require.NoError(t, err)
+	_, err = svc.AcceptInvite(*inv.InviteToken, "password8888")
+	require.NoError(t, err)
+	member, err := repo.FindUserByEmail("m1@example.com")
+	require.NoError(t, err)
+	_, err = svc.CreateTenantInvitation(member.ID, ms[0].TenantID.String(), "x@example.com", "member")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, errorz.ErrTenantInviteForbidden))
 }

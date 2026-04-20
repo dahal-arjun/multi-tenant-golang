@@ -22,7 +22,8 @@ func NewController(service *Service, logger framework.Logger) *Controller {
 }
 
 // Register godoc
-// @Summary Register user and tenant
+// @Summary Register user and tenant (bootstrap)
+// @Description Creates a verified user, tenant, and owner membership in one step. Prefer POST /auth/signup for self-serve users who verify email before creating an organization.
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -43,9 +44,156 @@ func (a *Controller) Register(c *gin.Context) {
 	responses.JSON(c, 201, out)
 }
 
+// Signup godoc
+// @Summary Self-serve signup (email verification required)
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body SignupRequest true "Email and password"
+// @Success 201 {object} SignupResponse
+// @Router /api/auth/signup [post]
+func (a *Controller) Signup(c *gin.Context) {
+	var req SignupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responses.HandleValidationError(a.logger, c, err)
+		return
+	}
+	out, err := a.service.Signup(req)
+	if err != nil {
+		responses.HandleError(a.logger, c, err)
+		return
+	}
+	responses.JSON(c, 201, out)
+}
+
+// VerifyEmail godoc
+// @Summary Verify email with token from signup or resend
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body VerifyEmailRequest true "Verification token"
+// @Success 204 "No Content"
+// @Router /api/auth/verify-email [post]
+func (a *Controller) VerifyEmail(c *gin.Context) {
+	var req VerifyEmailRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responses.HandleValidationError(a.logger, c, err)
+		return
+	}
+	if err := a.service.VerifyEmail(req.Token); err != nil {
+		responses.HandleError(a.logger, c, err)
+		return
+	}
+	c.Status(204)
+}
+
+// ResendVerification godoc
+// @Summary Resend email verification (rate-limited)
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body ResendVerificationRequest true "Email"
+// @Success 200 {object} ResendVerificationResponse
+// @Router /api/auth/resend-verification [post]
+func (a *Controller) ResendVerification(c *gin.Context) {
+	var req ResendVerificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responses.HandleValidationError(a.logger, c, err)
+		return
+	}
+	out, err := a.service.ResendVerification(req.Email, c.ClientIP())
+	if err != nil {
+		responses.HandleError(a.logger, c, err)
+		return
+	}
+	responses.JSON(c, 200, out)
+}
+
+// CreateTenant godoc
+// @Summary Create first organization after signup (pick_tenant_token)
+// @Description Authorization: Bearer pick_tenant_token from POST /auth/login when the user has no tenant memberships yet.
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer {pick_tenant_token}"
+// @Param body body CreateTenantRequest true "Tenant name"
+// @Success 201 {object} TokenResponse
+// @Router /api/auth/create-tenant [post]
+func (a *Controller) CreateTenant(c *gin.Context) {
+	header := c.GetHeader("Authorization")
+	raw := strings.TrimSpace(strings.TrimPrefix(header, "Bearer"))
+	if raw == "" {
+		responses.ErrorJSON(c, http.StatusUnauthorized, "Authorization Bearer pick_tenant_token required")
+		return
+	}
+	var req CreateTenantRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responses.HandleValidationError(a.logger, c, err)
+		return
+	}
+	out, err := a.service.CreateTenantWithPickToken(raw, req.TenantName)
+	if err != nil {
+		responses.HandleError(a.logger, c, err)
+		return
+	}
+	responses.JSON(c, 201, out)
+}
+
+// AcceptInvite godoc
+// @Summary Accept tenant invitation
+// @Description New invitees create their account; existing users must provide their current password.
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body AcceptInviteRequest true "Invite token and password"
+// @Success 200 {object} TokenResponse
+// @Router /api/auth/accept-invite [post]
+func (a *Controller) AcceptInvite(c *gin.Context) {
+	var req AcceptInviteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responses.HandleValidationError(a.logger, c, err)
+		return
+	}
+	out, err := a.service.AcceptInvite(req.Token, req.Password)
+	if err != nil {
+		responses.HandleError(a.logger, c, err)
+		return
+	}
+	responses.JSON(c, 200, out)
+}
+
+// CreateTenantInvite godoc
+// @Summary Invite user to current tenant by email
+// @Description Requires access token with tenant context; only owner or admin.
+// @Tags auth
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param body body CreateTenantInviteRequest true "Invitee email and tenant role"
+// @Success 201 {object} TenantInviteResponse
+// @Router /api/invites [post]
+func (a *Controller) CreateTenantInvite(c *gin.Context) {
+	_, tenantIDStr, userDBID, ok := authContext(c)
+	if !ok {
+		responses.HandleError(a.logger, c, errorz.ErrUnauthorizedAccess)
+		return
+	}
+	var req CreateTenantInviteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responses.HandleValidationError(a.logger, c, err)
+		return
+	}
+	out, err := a.service.CreateTenantInvitation(userDBID, tenantIDStr, req.Email, req.Role)
+	if err != nil {
+		responses.HandleError(a.logger, c, err)
+		return
+	}
+	responses.JSON(c, 201, out)
+}
+
 // Login godoc
 // @Summary Login (discover tenants)
-// @Description Returns tenant list and pick_tenant_token. Call POST /auth/tenant-session with Bearer pick_tenant_token and JSON tenant_id to obtain access_token and refresh_token.
+// @Description Requires a verified email. Returns tenant list and pick_tenant_token (also when tenants is empty, for POST /auth/create-tenant). Call POST /auth/tenant-session with Bearer pick_tenant_token and JSON tenant_id to obtain access_token and refresh_token.
 // @Tags auth
 // @Accept json
 // @Produce json

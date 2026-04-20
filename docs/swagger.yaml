@@ -1,5 +1,16 @@
 basePath: /
 definitions:
+  auth.AcceptInviteRequest:
+    properties:
+      password:
+        minLength: 8
+        type: string
+      token:
+        type: string
+    required:
+    - password
+    - token
+    type: object
   auth.ChangePasswordRequest:
     properties:
       current_password:
@@ -10,6 +21,25 @@ definitions:
     required:
     - current_password
     - new_password
+    type: object
+  auth.CreateTenantInviteRequest:
+    properties:
+      email:
+        type: string
+      role:
+        type: string
+    required:
+    - email
+    - role
+    type: object
+  auth.CreateTenantRequest:
+    properties:
+      tenant_name:
+        maxLength: 255
+        minLength: 1
+        type: string
+    required:
+    - tenant_name
     type: object
   auth.ForgotPasswordRequest:
     properties:
@@ -91,6 +121,20 @@ definitions:
     - password
     - tenant_name
     type: object
+  auth.ResendVerificationRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
+  auth.ResendVerificationResponse:
+    properties:
+      message:
+        type: string
+      verification_token:
+        type: string
+    type: object
   auth.ResetPasswordRequest:
     properties:
       new_password:
@@ -102,6 +146,24 @@ definitions:
     - new_password
     - token
     type: object
+  auth.SignupRequest:
+    properties:
+      email:
+        type: string
+      password:
+        minLength: 8
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  auth.SignupResponse:
+    properties:
+      message:
+        type: string
+      verification_token:
+        type: string
+    type: object
   auth.TenantChoice:
     properties:
       name:
@@ -111,6 +173,13 @@ definitions:
       slug:
         type: string
       tenant_id:
+        type: string
+    type: object
+  auth.TenantInviteResponse:
+    properties:
+      invite_token:
+        type: string
+      message:
         type: string
     type: object
   auth.TenantSessionRequest:
@@ -155,6 +224,13 @@ definitions:
       uuid:
         type: string
     type: object
+  auth.VerifyEmailRequest:
+    properties:
+      token:
+        type: string
+    required:
+    - token
+    type: object
   models.Widget:
     properties:
       created_at:
@@ -181,6 +257,29 @@ info:
   title: Multi-tenant API
   version: "1.0"
 paths:
+  /api/auth/accept-invite:
+    post:
+      consumes:
+      - application/json
+      description: New invitees create their account; existing users must provide
+        their current password.
+      parameters:
+      - description: Invite token and password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.AcceptInviteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+      summary: Accept tenant invitation
+      tags:
+      - auth
   /api/auth/change-password:
     post:
       consumes:
@@ -200,6 +299,34 @@ paths:
       security:
       - BearerAuth: []
       summary: Change password (authenticated)
+      tags:
+      - auth
+  /api/auth/create-tenant:
+    post:
+      consumes:
+      - application/json
+      description: 'Authorization: Bearer pick_tenant_token from POST /auth/login
+        when the user has no tenant memberships yet.'
+      parameters:
+      - description: Bearer {pick_tenant_token}
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Tenant name
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.CreateTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+      summary: Create first organization after signup (pick_tenant_token)
       tags:
       - auth
   /api/auth/forgot-password:
@@ -229,7 +356,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Returns tenant list and pick_tenant_token. Call POST /auth/tenant-session
+      description: Requires a verified email. Returns tenant list and pick_tenant_token
+        (also when tenants is empty, for POST /auth/create-tenant). Call POST /auth/tenant-session
         with Bearer pick_tenant_token and JSON tenant_id to obtain access_token and
         refresh_token.
       parameters:
@@ -331,6 +459,9 @@ paths:
     post:
       consumes:
       - application/json
+      description: Creates a verified user, tenant, and owner membership in one step.
+        Prefer POST /auth/signup for self-serve users who verify email before creating
+        an organization.
       parameters:
       - description: Registration
         in: body
@@ -345,7 +476,28 @@ paths:
           description: Created
           schema:
             $ref: '#/definitions/auth.TokenResponse'
-      summary: Register user and tenant
+      summary: Register user and tenant (bootstrap)
+      tags:
+      - auth
+  /api/auth/resend-verification:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Email
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.ResendVerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.ResendVerificationResponse'
+      summary: Resend email verification (rate-limited)
       tags:
       - auth
   /api/auth/reset-password:
@@ -365,6 +517,27 @@ paths:
         "204":
           description: No Content
       summary: Complete password reset
+      tags:
+      - auth
+  /api/auth/signup:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Email and password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.SignupRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/auth.SignupResponse'
+      summary: Self-serve signup (email verification required)
       tags:
       - auth
   /api/auth/tenant-session:
@@ -393,6 +566,49 @@ paths:
           schema:
             $ref: '#/definitions/auth.TokenResponse'
       summary: Open session for a tenant
+      tags:
+      - auth
+  /api/auth/verify-email:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Verification token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.VerifyEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+      summary: Verify email with token from signup or resend
+      tags:
+      - auth
+  /api/invites:
+    post:
+      consumes:
+      - application/json
+      description: Requires access token with tenant context; only owner or admin.
+      parameters:
+      - description: Invitee email and tenant role
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.CreateTenantInviteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/auth.TenantInviteResponse'
+      security:
+      - BearerAuth: []
+      summary: Invite user to current tenant by email
       tags:
       - auth
   /api/widgets:

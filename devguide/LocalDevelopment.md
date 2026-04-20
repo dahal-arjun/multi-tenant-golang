@@ -74,7 +74,7 @@ done
 **If Atlas says** `connected database is not clean…`:
 
 - Wipe volume: `docker compose down -v`, then `docker compose up -d postgres`, then `make migrate-apply`.
-- Or `make migrate-baseline BASELINE=20260422120000` if the schema already matches all migrations (adjust version as needed).
+- Or `make migrate-baseline BASELINE=20260423120000` if the schema already matches all migrations (adjust version as needed).
 
 ---
 
@@ -82,23 +82,45 @@ done
 
 | Method | Path | Auth |
 |--------|------|------|
-| POST | `/api/auth/register` | No |
+| POST | `/api/auth/register` | No (bootstrap: verified user + tenant + tokens) |
+| POST | `/api/auth/signup` | No (self-serve: user only; verify email next) |
+| POST | `/api/auth/verify-email` | No |
+| POST | `/api/auth/resend-verification` | No (rate-limited: 3/hour per email+IP) |
 | POST | `/api/auth/login` | No |
 | POST | `/api/auth/tenant-session` | Bearer `pick_tenant_token` from login |
+| POST | `/api/auth/create-tenant` | Bearer `pick_tenant_token` (first org when `tenants` is empty) |
+| POST | `/api/auth/accept-invite` | No |
 | POST | `/api/auth/refresh` | No |
 | POST | `/api/auth/forgot-password` | No |
 | POST | `/api/auth/reset-password` | No |
 | GET | `/api/auth/me` | Bearer access token |
 | PATCH | `/api/auth/me` | Bearer |
 | POST | `/api/auth/change-password` | Bearer |
-| **POST** | **`/api/auth/logout`** | **Bearer** |
+| POST | `/api/auth/logout` | Bearer |
+| POST | `/api/invites` | Bearer access token (tenant **owner** or **admin** only) |
 
-### Login (two steps)
+### Self-serve onboarding (verify → first tenant)
 
-1. **POST `/api/auth/login`** with `email` and `password`. Response includes `user`, `tenants` (id, name, slug, role), and `pick_tenant_token` (short-lived; omitted or empty when the user has no memberships).
+1. **POST `/api/auth/signup`** with `email` and `password`. In `ENVIRONMENT=local`, the JSON may include `verification_token` for testing.
+2. **POST `/api/auth/verify-email`** with `{"token":"..."}` (or open `PUBLIC_APP_URL` + `EMAIL_VERIFICATION_PATH` with that token in your frontend).
+3. **POST `/api/auth/login`**. Until the email is verified, login returns **403** with a distinct error: within the grace window (`EMAIL_VERIFICATION_TTL_MINUTES` from signup or last resend), use verify/resend; after the window, the account is deactivated until **POST `/api/auth/resend-verification`** extends the window and re-enables the account path.
+4. If `tenants` is empty, the response still includes **`pick_tenant_token`**. Call **POST `/api/auth/create-tenant`** with `Authorization: Bearer <pick_tenant_token>` and `{"tenant_name":"..."}` to create the organization and receive `access_token` / `refresh_token`.
+5. If the user already has tenants, use **`tenant-session`** as before.
+
+### Login (existing members)
+
+1. **POST `/api/auth/login`** with `email` and `password`. Response includes `user`, `tenants`, and `pick_tenant_token` (short-lived).
 2. **POST `/api/auth/tenant-session`** with header `Authorization: Bearer <pick_tenant_token>` and JSON `{"tenant_id":"<uuid from tenants>"}`. Response is the usual `access_token` and `refresh_token` for that tenant.
 
-Use the access token on protected routes; it is bound to the chosen tenant. The pick token is only for this exchange and is rejected by the normal JWT middleware.
+Use the access token on protected routes; it is bound to the chosen tenant. The pick token is only for `tenant-session` and `create-tenant`, and is rejected by the normal JWT middleware.
+
+### Tenant invitations
+
+- **POST `/api/invites`** with Bearer access token: body `{"email":"...","role":"member|admin|owner"}`. In `ENVIRONMENT=local`, `invite_token` may be returned for testing. New invitees complete **POST `/api/auth/accept-invite`** with `token` and `password` (existing users must send their **current** password). Invited users are treated as email-verified when they accept.
+
+### Phase 2 (permissions)
+
+Today, tenant authorization is limited to **owner**, **admin**, and **member** string roles (see `domain/constants/tenant.go`). Finer-grained permission matrices (e.g. per-route policies, Casbin, or a `permissions` table) are not implemented yet; only invite creation is restricted to **owner** and **admin**.
 
 ### Logout
 

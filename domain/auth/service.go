@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -24,6 +25,9 @@ type Service struct {
 	repo   Repository
 	env    *framework.Env
 	logger framework.Logger
+
+	resendMu   sync.Mutex
+	resendHits map[string][]time.Time
 }
 
 // NewService constructs the auth service.
@@ -32,6 +36,7 @@ func NewService(repo Repository, env *framework.Env, logger framework.Logger) *S
 }
 
 // Register creates user, tenant, owner membership, and returns tokens.
+// Intended for bootstrap or admin flows: the email is marked verified immediately (no verification email).
 func (s *Service) Register(req RegisterRequest) (*TokenResponse, error) {
 	if len(req.Password) < 8 {
 		return nil, errorz.ErrWeakPassword
@@ -59,7 +64,7 @@ func (s *Service) Register(req RegisterRequest) (*TokenResponse, error) {
 			Email:           email,
 			PasswordHash:    string(hash),
 			IsActive:        true,
-			IsEmailVerified: false,
+			IsEmailVerified: true,
 		}
 		if err := tx.Create(u).Error; err != nil {
 			return err
@@ -106,7 +111,8 @@ func (s *Service) Register(req RegisterRequest) (*TokenResponse, error) {
 	return out, err
 }
 
-// Login validates credentials and returns tenant choices plus a short-lived pick_tenant_token.
+// Login validates credentials and returns tenant choices plus a short-lived pick_tenant_token
+// (including when the user has no tenants yet, for CreateTenantWithPickToken).
 // Call TenantSession with that token and a chosen tenant_id to receive access and refresh tokens.
 func (s *Service) Login(req LoginRequest) (*LoginDiscoveryResponse, error) {
 	email := strings.ToLower(strings.TrimSpace(req.Email))
@@ -120,6 +126,18 @@ func (s *Service) Login(req LoginRequest) (*LoginDiscoveryResponse, error) {
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)); err != nil {
 		return nil, errorz.ErrInvalidCredentials
 	}
+
+	if !u.IsEmailVerified {
+		deadline := effectiveVerificationDeadline(u, s.emailVerificationTTL())
+		if deadline != nil && time.Now().UTC().After(*deadline) {
+			if u.IsActive {
+				_ = s.repo.Model(u).Update("is_active", false).Error
+			}
+			return nil, errorz.ErrVerificationExpired
+		}
+		return nil, errorz.ErrEmailNotVerified
+	}
+
 	if !u.IsActive {
 		return nil, errorz.ErrInvalidCredentials
 	}
@@ -155,9 +173,6 @@ func (s *Service) Login(req LoginRequest) (*LoginDiscoveryResponse, error) {
 			Role:      string(u.Role),
 		},
 		Tenants: choices,
-	}
-	if len(choices) == 0 {
-		return out, nil
 	}
 	ttl := time.Duration(s.env.LoginPickTenantTTLMinutes) * time.Minute
 	if s.env.LoginPickTenantTTLMinutes <= 0 {
@@ -502,6 +517,468 @@ func (s *Service) issueTokensTx(tx *gorm.DB, u *models.User, tenantID types.Bina
 		TokenType:    "Bearer",
 		ExpiresIn:    int64(accessTTL.Seconds()),
 	}, nil
+}
+
+// Signup creates an unverified user without a tenant and emails (or returns) a verification token.
+func (s *Service) Signup(req SignupRequest) (*SignupResponse, error) {
+	if len(req.Password) < 8 {
+		return nil, errorz.ErrWeakPassword
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	existing, err := s.repo.FindUserByEmail(email)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, errorz.ErrEmailTaken
+	}
+	hashPass, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	ttl := s.emailVerificationTTL()
+	deadline := time.Now().UTC().Add(ttl)
+	var out *SignupResponse
+	err = s.repo.Transaction(func(tx *gorm.DB) error {
+		u := &models.User{
+			Email:                     email,
+			PasswordHash:              string(hashPass),
+			IsActive:                  true,
+			IsEmailVerified:           false,
+			EmailVerificationDeadline: &deadline,
+		}
+		if err := tx.Create(u).Error; err != nil {
+			return err
+		}
+		actor := u.ID
+		if err := tx.Model(u).Updates(map[string]any{
+			"created_by_id": actor,
+			"updated_by_id": actor,
+		}).Error; err != nil {
+			return err
+		}
+		plain, err := randomToken(32)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256([]byte(plain))
+		hash := hex.EncodeToString(sum[:])
+		if err := s.repo.InvalidatePendingEmailVerifications(tx, u.ID); err != nil {
+			return err
+		}
+		ev := &models.EmailVerificationToken{
+			UserID:    u.ID,
+			TokenHash: hash,
+			ExpiresAt: time.Now().UTC().Add(ttl),
+		}
+		if err := s.repo.CreateEmailVerificationToken(tx, ev); err != nil {
+			return err
+		}
+		out = &SignupResponse{
+			Message: "If this email is new, check your inbox to verify your account.",
+		}
+		if strings.EqualFold(s.env.Environment, "local") {
+			out.VerificationToken = &plain
+		}
+		return nil
+	})
+	return out, err
+}
+
+// VerifyEmail marks the user verified using a one-time token from the verification email.
+func (s *Service) VerifyEmail(token string) error {
+	sum := sha256.Sum256([]byte(token))
+	hash := hex.EncodeToString(sum[:])
+	row, err := s.repo.FindValidEmailVerificationByHash(hash)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return errorz.ErrInvalidVerificationToken
+	}
+	u, err := s.repo.FindUserByID(row.UserID)
+	if err != nil {
+		return err
+	}
+	if u == nil {
+		return errorz.ErrInvalidVerificationToken
+	}
+	actor := u.ID
+	return s.repo.Transaction(func(tx *gorm.DB) error {
+		if err := s.repo.InvalidatePendingEmailVerifications(tx, u.ID); err != nil {
+			return err
+		}
+		return tx.Model(u).Updates(map[string]any{
+			"is_email_verified":           true,
+			"is_active":                   true,
+			"email_verification_deadline": nil,
+			"updated_by_id":               actor,
+		}).Error
+	})
+}
+
+// ResendVerification issues a new verification link for an unverified account (rate-limited).
+func (s *Service) ResendVerification(email, clientIP string) (*ResendVerificationResponse, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	key := email + "||" + strings.TrimSpace(clientIP)
+	if !s.recordResend(key) {
+		return nil, errorz.ErrResendVerificationLimited
+	}
+	msg := "If an account exists for this email and it is still unverified, a new verification link has been issued."
+	out := &ResendVerificationResponse{Message: msg}
+	u, err := s.repo.FindUserByEmail(email)
+	if err != nil {
+		return nil, err
+	}
+	if u == nil || u.IsEmailVerified {
+		return out, nil
+	}
+	ttl := s.emailVerificationTTL()
+	deadline := time.Now().UTC().Add(ttl)
+	plain, err := randomToken(32)
+	if err != nil {
+		return nil, err
+	}
+	tokHash := sha256.Sum256([]byte(plain))
+	hash := hex.EncodeToString(tokHash[:])
+	actor := u.ID
+	err = s.repo.Transaction(func(tx *gorm.DB) error {
+		if err := s.repo.InvalidatePendingEmailVerifications(tx, u.ID); err != nil {
+			return err
+		}
+		ev := &models.EmailVerificationToken{
+			UserID:    u.ID,
+			TokenHash: hash,
+			ExpiresAt: time.Now().UTC().Add(ttl),
+		}
+		if err := s.repo.CreateEmailVerificationToken(tx, ev); err != nil {
+			return err
+		}
+		return tx.Model(u).Updates(map[string]any{
+			"is_active":                   true,
+			"email_verification_deadline": deadline,
+			"updated_by_id":               actor,
+		}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(s.env.Environment, "local") {
+		out.VerificationToken = &plain
+	}
+	return out, nil
+}
+
+// CreateTenantWithPickToken creates the first organization for a verified user with no memberships.
+func (s *Service) CreateTenantWithPickToken(pickToken, tenantName string) (*TokenResponse, error) {
+	claims, err := jwtutil.ParseTenantPick([]byte(s.env.JWTSecret), pickToken)
+	if err != nil {
+		return nil, errorz.ErrInvalidPickToken
+	}
+	uid, err := types.ShouldParseUUID(claims.Subject)
+	if err != nil {
+		return nil, errorz.ErrInvalidPickToken
+	}
+	u, err := s.repo.FindUserByUUID(uid)
+	if err != nil {
+		return nil, err
+	}
+	if u == nil || !u.IsActive || u.ID != uint(claims.UserDBID) || !u.IsEmailVerified {
+		return nil, errorz.ErrInvalidPickToken
+	}
+	memberships, err := s.repo.ListMembershipsForUser(u.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(memberships) > 0 {
+		return nil, errorz.ErrForbiddenAccess
+	}
+	name := strings.TrimSpace(tenantName)
+	if name == "" {
+		return nil, errorz.ErrBadRequest.JoinError("tenant_name is required")
+	}
+	var out *TokenResponse
+	err = s.repo.Transaction(func(tx *gorm.DB) error {
+		slug, err := allocateSlugTx(tx, name)
+		if err != nil {
+			return err
+		}
+		actor := u.ID
+		t := &models.Tenant{
+			Name: name,
+			Slug: slug,
+			AuditFields: models.AuditFields{
+				CreatedByID: &actor,
+				UpdatedByID: &actor,
+			},
+		}
+		if err := tx.Create(t).Error; err != nil {
+			return err
+		}
+		m := &models.TenantMembership{
+			UserID:   u.ID,
+			TenantID: t.ID,
+			Role:     constants.TenantRoleOwner,
+			AuditFields: models.AuditFields{
+				CreatedByID: &actor,
+				UpdatedByID: &actor,
+			},
+		}
+		if err := tx.Create(m).Error; err != nil {
+			return err
+		}
+		tid := t.ID
+		if err := tx.Model(u).Updates(map[string]any{
+			"tenant_id":     tid,
+			"updated_by_id": actor,
+		}).Error; err != nil {
+			return err
+		}
+		tr, err := s.issueTokensTx(tx, u, t.ID, string(constants.TenantRoleOwner))
+		if err != nil {
+			return err
+		}
+		out = tr
+		return nil
+	})
+	return out, err
+}
+
+// CreateTenantInvitation adds a pending invite; caller must be owner or admin of the tenant.
+func (s *Service) CreateTenantInvitation(actorID uint, tenantIDStr, inviteEmail, roleStr string) (*TenantInviteResponse, error) {
+	role, err := parseTenantRole(roleStr)
+	if err != nil {
+		return nil, err
+	}
+	tid, err := types.ShouldParseUUID(tenantIDStr)
+	if err != nil {
+		return nil, err
+	}
+	t, err := s.repo.FindTenantByID(tid)
+	if err != nil {
+		return nil, err
+	}
+	if t == nil {
+		return nil, errorz.ErrTenantNotFound
+	}
+	m, err := s.repo.FindMembership(actorID, tid)
+	if err != nil {
+		return nil, err
+	}
+	if m == nil {
+		return nil, errorz.ErrMembershipNotFound
+	}
+	if m.Role != constants.TenantRoleOwner && m.Role != constants.TenantRoleAdmin {
+		return nil, errorz.ErrTenantInviteForbidden
+	}
+	email := strings.ToLower(strings.TrimSpace(inviteEmail))
+	if email == "" {
+		return nil, errorz.ErrBadRequest.JoinError("email is required")
+	}
+	existingUser, err := s.repo.FindUserByEmail(email)
+	if err != nil {
+		return nil, err
+	}
+	if existingUser != nil {
+		existingM, err := s.repo.FindMembership(existingUser.ID, tid)
+		if err != nil {
+			return nil, err
+		}
+		if existingM != nil {
+			return nil, errorz.ErrInviteAlreadyMember
+		}
+	}
+	ttl := s.tenantInviteTTL()
+	plain, err := randomToken(32)
+	if err != nil {
+		return nil, err
+	}
+	tokHash := sha256.Sum256([]byte(plain))
+	hash := hex.EncodeToString(tokHash[:])
+	var out *TenantInviteResponse
+	err = s.repo.Transaction(func(tx *gorm.DB) error {
+		if err := s.repo.RevokePendingTenantInvitations(tx, tid, email); err != nil {
+			return err
+		}
+		inv := &models.TenantInvitation{
+			TenantID:        tid,
+			Email:           email,
+			Role:            role,
+			TokenHash:       hash,
+			InvitedByUserID: actorID,
+			ExpiresAt:       time.Now().UTC().Add(ttl),
+		}
+		if err := s.repo.CreateTenantInvitation(tx, inv); err != nil {
+			return err
+		}
+		out = &TenantInviteResponse{Message: "Invitation sent."}
+		if strings.EqualFold(s.env.Environment, "local") {
+			out.InviteToken = &plain
+		}
+		return nil
+	})
+	return out, err
+}
+
+// AcceptInvite creates or authenticates a user and attaches the invited membership.
+func (s *Service) AcceptInvite(token, password string) (*TokenResponse, error) {
+	if len(password) < 8 {
+		return nil, errorz.ErrWeakPassword
+	}
+	sum := sha256.Sum256([]byte(token))
+	hash := hex.EncodeToString(sum[:])
+	inv, err := s.repo.FindValidTenantInvitationByHash(hash)
+	if err != nil {
+		return nil, err
+	}
+	if inv == nil {
+		return nil, errorz.ErrInvalidInviteToken
+	}
+	t, err := s.repo.FindTenantByID(inv.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if t == nil {
+		return nil, errorz.ErrInvalidInviteToken
+	}
+	email := inv.Email
+	u, err := s.repo.FindUserByEmail(email)
+	if err != nil {
+		return nil, err
+	}
+	var out *TokenResponse
+	err = s.repo.Transaction(func(tx *gorm.DB) error {
+		if u == nil {
+			hashPass, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			if err != nil {
+				return err
+			}
+			newUser := &models.User{
+				Email:           email,
+				PasswordHash:    string(hashPass),
+				IsActive:        true,
+				IsEmailVerified: true,
+			}
+			if err := tx.Create(newUser).Error; err != nil {
+				return err
+			}
+			actor := newUser.ID
+			if err := tx.Model(newUser).Updates(map[string]any{
+				"tenant_id":     inv.TenantID,
+				"created_by_id": actor,
+				"updated_by_id": actor,
+			}).Error; err != nil {
+				return err
+			}
+			u = newUser
+		} else {
+			if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)); err != nil {
+				return errorz.ErrInvalidCredentials
+			}
+			var dup models.TenantMembership
+			err := tx.Where("user_id = ? AND tenant_id = ?", u.ID, inv.TenantID).First(&dup).Error
+			if err == nil {
+				return errorz.ErrInviteAlreadyMember
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			actor := u.ID
+			if err := tx.Model(u).Updates(map[string]any{
+				"is_email_verified":           true,
+				"is_active":                   true,
+				"email_verification_deadline": nil,
+				"tenant_id":                   inv.TenantID,
+				"updated_by_id":               actor,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		member := &models.TenantMembership{
+			UserID:   u.ID,
+			TenantID: inv.TenantID,
+			Role:     inv.Role,
+			AuditFields: models.AuditFields{
+				CreatedByID: &u.ID,
+				UpdatedByID: &u.ID,
+			},
+		}
+		if err := tx.Create(member).Error; err != nil {
+			return err
+		}
+		if err := s.repo.MarkTenantInvitationAccepted(tx, inv.ID); err != nil {
+			return err
+		}
+		tr, err := s.issueTokensTx(tx, u, inv.TenantID, string(inv.Role))
+		if err != nil {
+			return err
+		}
+		out = tr
+		return nil
+	})
+	return out, err
+}
+
+func (s *Service) emailVerificationTTL() time.Duration {
+	if s.env.EmailVerificationTTLMinutes <= 0 {
+		return 15 * time.Minute
+	}
+	return time.Duration(s.env.EmailVerificationTTLMinutes) * time.Minute
+}
+
+func (s *Service) tenantInviteTTL() time.Duration {
+	if s.env.TenantInviteTTLMinutes <= 0 {
+		return 7 * 24 * time.Hour
+	}
+	return time.Duration(s.env.TenantInviteTTLMinutes) * time.Minute
+}
+
+func effectiveVerificationDeadline(u *models.User, ttl time.Duration) *time.Time {
+	if u.IsEmailVerified {
+		return nil
+	}
+	if u.EmailVerificationDeadline != nil {
+		t := u.EmailVerificationDeadline.UTC()
+		return &t
+	}
+	if u.CreatedAt.IsZero() {
+		return nil
+	}
+	d := u.CreatedAt.UTC().Add(ttl)
+	return &d
+}
+
+func parseTenantRole(s string) (constants.TenantRole, error) {
+	r := constants.TenantRole(strings.ToLower(strings.TrimSpace(s)))
+	switch r {
+	case constants.TenantRoleOwner, constants.TenantRoleAdmin, constants.TenantRoleMember:
+		return r, nil
+	default:
+		return "", errorz.ErrInvalidTenantRole
+	}
+}
+
+func (s *Service) recordResend(key string) bool {
+	const maxPerWindow = 3
+	const window = time.Hour
+	s.resendMu.Lock()
+	defer s.resendMu.Unlock()
+	if s.resendHits == nil {
+		s.resendHits = make(map[string][]time.Time)
+	}
+	now := time.Now()
+	var kept []time.Time
+	for _, ts := range s.resendHits[key] {
+		if now.Sub(ts) < window {
+			kept = append(kept, ts)
+		}
+	}
+	if int64(len(kept)) >= int64(maxPerWindow) {
+		return false
+	}
+	kept = append(kept, now)
+	s.resendHits[key] = kept
+	return true
 }
 
 func allocateSlugTx(tx *gorm.DB, name string) (string, error) {

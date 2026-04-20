@@ -34,6 +34,8 @@ func setupPostgres(t *testing.T) (Repository, *Service, *framework.Env) {
 		&models.TenantMembership{},
 		&models.RefreshToken{},
 		&models.PasswordResetToken{},
+		&models.EmailVerificationToken{},
+		&models.TenantInvitation{},
 		&models.Widget{},
 	)
 	require.NoError(t, err)
